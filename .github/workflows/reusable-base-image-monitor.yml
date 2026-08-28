@@ -1,0 +1,493 @@
+name: Reusable - Base Image Monitor
+
+# REUSABLE WORKFLOW
+# Callable via `workflow_call` from any consumer repository that owns a
+# Dockerfile. Detects upstream base image updates, applies the configured
+# update strategy, updates the Dockerfile, and opens a Pull Request using
+# standard automation conventions.
+#
+# SCHEDULING: This workflow deliberately has NO `schedule:` trigger of its
+# own - GitHub only evaluates cron from static workflow YAML on the default
+# branch, so each consumer repository owns its own schedule by declaring
+# `on.schedule.cron` in its thin caller workflow and invoking this workflow
+# via `uses:`. This keeps monitoring frequency/day/time/timezone fully
+# consumer-controlled without any central registry. See
+# docs/REUSABLE_AUTOMATION.md for the scheduling model and UTC conversion
+# guidance.
+#
+# CONFIGURATION: All other behaviour (enabled flag, update strategy,
+# auto-PR, auto-merge, reviewers, assignees) is read from the consumer
+# repository's .github/docker-automation.yml via load-automation-config,
+# so it can be changed without touching any workflow file. Explicit
+# `with:` inputs below, when non-empty, override the config file value -
+# useful for one-off workflow_dispatch runs.
+#
+# Consumers should reference this workflow with a pinned version, e.g.:
+#   uses: <org>/docker-image-lifecycle/.github/workflows/reusable-base-image-monitor.yml@v1
+
+on:
+  workflow_call:
+    inputs:
+      config-path:
+        description: 'Path to the automation config file in the consumer repository'
+        type: string
+        required: false
+        default: '.github/docker-automation.yml'
+      config-env:
+        description: 'Newline-separated KEY=VALUE pairs to expand ${VAR} placeholders in the config file'
+        type: string
+        required: false
+        default: ''
+      dockerfile-path:
+        description: 'Path to the Dockerfile to inspect (overrides config)'
+        type: string
+        required: false
+        default: 'Dockerfile'
+      update-strategy:
+        description: 'One of: patch, minor, major. Empty = use variable/config file value.'
+        type: string
+        required: false
+        default: ''
+      update-policy:
+        description: >
+          Which signals decide an update: DIGEST_AND_VERSION (default),
+          DIGEST_ONLY, VERSION_ONLY, STRICT_SEMVER, ALWAYS_UPDATE.
+          Empty = use variable/config file value.
+        type: string
+        required: false
+        default: ''
+      registry-username:
+        description: >
+          Optional username for reading the UPSTREAM base image registry.
+          Only needed for private base images or to lift anonymous pull
+          rate limits. Read-only credentials are sufficient.
+        type: string
+        required: false
+        default: ''
+      dry-run:
+        description: 'Do not push branch or open a pull request'
+        type: boolean
+        required: false
+        default: true
+      pr-reviewers:
+        description: 'Comma-separated reviewers. Empty = use variable/config file value.'
+        type: string
+        required: false
+        default: ''
+      pr-assignees:
+        description: 'Comma-separated assignees. Empty = use variable/config file value.'
+        type: string
+        required: false
+        default: ''
+      # ---------------------------------------------------------------
+      # Repository-Variable passthrough. Reusable workflows cannot read
+      # the caller's `vars` context directly, so the consumer's thin
+      # caller workflow must forward each Repository Variable it wants
+      # honoured, e.g. `var-monitor-enabled: ${{ vars.BASE_IMAGE_MONITOR_ENABLED }}`.
+      # These take precedence over docker-automation.yml but are
+      # themselves overridden by the explicit `with:` inputs above when
+      # both are set (e.g. a one-off workflow_dispatch run).
+      # ---------------------------------------------------------------
+      var-monitor-enabled:
+        type: string
+        required: false
+        default: ''
+      var-update-strategy:
+        type: string
+        required: false
+        default: ''
+      var-update-policy:
+        description: 'Repository Variable passthrough: BASE_IMAGE_UPDATE_POLICY'
+        type: string
+        required: false
+        default: ''
+      var-auto-create-pr:
+        type: string
+        required: false
+        default: ''
+      var-auto-merge:
+        type: string
+        required: false
+        default: ''
+      var-reviewers:
+        type: string
+        required: false
+        default: ''
+      var-assignees:
+        type: string
+        required: false
+        default: ''
+      automation-ref:
+        description: >
+          Deprecated and unused. GitHub Actions does not support expressions
+          in a step's `uses:` key, so this input can no longer control which
+          ref this workflow's own composite actions resolve to - they always
+          use the same ref this reusable workflow was called with (e.g. the
+          "@v1" in your `uses:` line). Kept only so existing callers that
+          still pass this input do not break; safe to remove from callers.
+        type: string
+        required: false
+        default: 'v1'
+    secrets:
+      REGISTRY_PASSWORD:
+        description: >
+          Optional read-only password/token for the UPSTREAM base image
+          registry. Only required for private base images or to lift
+          anonymous pull rate limits. Never use publish credentials here.
+        required: false
+    outputs:
+      update_available:
+        description: 'Whether an update (version bump or same-tag rebuild) was detected'
+        value: ${{ jobs.monitor.outputs.update_available }}
+      latest_image_version:
+        description: 'The newest eligible upstream tag'
+        value: ${{ jobs.monitor.outputs.latest_image_version }}
+      update_kind:
+        description: 'NONE | REBUILD | VERSION_UPDATE | REPIN'
+        value: ${{ jobs.monitor.outputs.update_kind }}
+      outcome:
+        description: 'IGNORE | UPDATE | REVIEW'
+        value: ${{ jobs.monitor.outputs.outcome }}
+      target_digest:
+        description: 'Digest that was pinned by this run'
+        value: ${{ jobs.monitor.outputs.target_digest }}
+      pr_url:
+        description: 'URL of the created/reused Dockerfile update PR'
+        value: ${{ jobs.monitor.outputs.pr_url }}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: base-image-monitor-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    name: Check and Update Dockerfile Base Image
+    runs-on: ubuntu-latest
+    outputs:
+      update_available: ${{ steps.decide.outputs.should_update }}
+      latest_image_version: ${{ steps.decide.outputs.target_tag }}
+      update_kind: ${{ steps.decide.outputs.update_kind }}
+      outcome: ${{ steps.decide.outputs.outcome }}
+      target_digest: ${{ steps.decide.outputs.target_digest }}
+      pr_url: ${{ steps.create-pr.outputs.pr_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          # Full history so digest history can be reconstructed from the
+          # Dockerfile's own git log for rollback detection.
+          fetch-depth: 0
+
+      # Reusable logic unit - see .github/actions/load-automation-config
+      - name: Load automation configuration
+        id: config
+        uses: $/.github/actions/load-automation-config
+        with:
+          config-path: ${{ inputs.config-path }}
+          env-overrides: ${{ inputs.config-env }}
+          var-monitor-enabled: ${{ inputs.var-monitor-enabled }}
+          var-update-strategy: ${{ inputs.var-update-strategy }}
+          var-update-policy: ${{ inputs.var-update-policy }}
+          var-auto-create-pr: ${{ inputs.var-auto-create-pr }}
+          var-auto-merge: ${{ inputs.var-auto-merge }}
+          var-reviewers: ${{ inputs.var-reviewers }}
+          var-assignees: ${{ inputs.var-assignees }}
+
+      - name: Resolve effective settings
+        id: effective
+        shell: bash
+        env:
+          INPUT_STRATEGY: ${{ inputs.update-strategy }}
+          CONFIG_STRATEGY: ${{ steps.config.outputs.update_strategy }}
+          INPUT_POLICY: ${{ inputs.update-policy }}
+          CONFIG_POLICY: ${{ steps.config.outputs.update_policy }}
+          INPUT_REVIEWERS: ${{ inputs.pr-reviewers }}
+          CONFIG_REVIEWERS: ${{ steps.config.outputs.reviewers }}
+          INPUT_ASSIGNEES: ${{ inputs.pr-assignees }}
+          CONFIG_ASSIGNEES: ${{ steps.config.outputs.assignees }}
+        run: |
+          set -euo pipefail
+          {
+            echo "update_strategy=${INPUT_STRATEGY:-$CONFIG_STRATEGY}"
+            echo "update_policy=${INPUT_POLICY:-${CONFIG_POLICY:-DIGEST_AND_VERSION}}"
+            echo "reviewers=${INPUT_REVIEWERS:-$CONFIG_REVIEWERS}"
+            echo "assignees=${INPUT_ASSIGNEES:-$CONFIG_ASSIGNEES}"
+          } >> "$GITHUB_OUTPUT"
+
+      # Reusable logic unit - see .github/actions/extract-base-image
+      # Parses the FROM instruction into registry/repository/tag/digest.
+      - name: Extract base image reference from Dockerfile
+        id: extract-base-image
+        if: ${{ steps.config.outputs.monitor_enabled == 'true' }}
+        uses: $/.github/actions/extract-base-image
+        with:
+          dockerfile-path: ${{ inputs.dockerfile-path }}
+
+      # SIGNAL 1 (authoritative): what does the CURRENTLY pinned tag resolve
+      # to upstream right now? Drift here means the publisher rebuilt the
+      # image without changing the tag - undetectable by tag comparison.
+      - name: Resolve current tag digest
+        id: current-digest
+        if: ${{ steps.config.outputs.monitor_enabled == 'true' && steps.extract-base-image.outputs.base_image_version != '' }}
+        uses: $/.github/actions/resolve-image-digest
+        with:
+          registry: ${{ steps.extract-base-image.outputs.registry }}
+          repository: ${{ steps.extract-base-image.outputs.repository }}
+          tag: ${{ steps.extract-base-image.outputs.base_image_version }}
+          username: ${{ inputs.registry-username }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      # SIGNAL 2 (semantic context): is there a newer eligible upstream tag?
+      # Never the sole update trigger - it classifies the change and gates
+      # it against the repository's update strategy.
+      - name: Determine latest available base image tag
+        id: check-latest
+        if: ${{ steps.config.outputs.monitor_enabled == 'true' && steps.extract-base-image.outputs.base_image_version != '' }}
+        uses: $/.github/actions/check-latest-upstream-tag
+        with:
+          registry: ${{ steps.extract-base-image.outputs.registry }}
+          repository-path: ${{ steps.extract-base-image.outputs.repository }}
+          current-tag: ${{ steps.extract-base-image.outputs.base_image_version }}
+          update-strategy: ${{ steps.effective.outputs.update_strategy }}
+          username: ${{ inputs.registry-username }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      # Resolve the digest of the upgrade target so the Dockerfile is never
+      # rewritten to an unpinned reference.
+      - name: Resolve latest tag digest
+        id: latest-digest
+        if: ${{ steps.check-latest.outputs.update_available == 'true' }}
+        uses: $/.github/actions/resolve-image-digest
+        with:
+          registry: ${{ steps.extract-base-image.outputs.registry }}
+          repository: ${{ steps.extract-base-image.outputs.repository }}
+          tag: ${{ steps.check-latest.outputs.latest_image_version }}
+          username: ${{ inputs.registry-username }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      # Digests this repository has previously pinned, newest first. A
+      # target digest appearing in this list is a rollback, not an update.
+      - name: Reconstruct digest history
+        id: history
+        if: ${{ steps.config.outputs.monitor_enabled == 'true' }}
+        shell: bash
+        env:
+          DOCKERFILE_PATH: ${{ inputs.dockerfile-path }}
+        run: |
+          set -euo pipefail
+          HISTORY="$(
+            git log --max-count=100 -p --format='' -- "$DOCKERFILE_PATH" 2>/dev/null \
+            | grep -oE '^-.*@sha256:[0-9a-f]+' \
+            | grep -oE 'sha256:[0-9a-f]+' \
+            | awk '!seen[$0]++' || true
+          )"
+          COUNT="$(printf '%s' "$HISTORY" | grep -c . || true)"
+          echo "Previously pinned digests found: ${COUNT:-0}"
+          {
+            echo "digests<<__EOF__"
+            printf '%s\n' "$HISTORY"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      # Policy engine - see .github/actions/decide-base-image-update
+      - name: Decide whether to update
+        id: decide
+        if: ${{ steps.config.outputs.monitor_enabled == 'true' }}
+        uses: $/.github/actions/decide-base-image-update
+        with:
+          policy: ${{ steps.effective.outputs.update_policy }}
+          update-strategy: ${{ steps.effective.outputs.update_strategy }}
+          current-tag: ${{ steps.extract-base-image.outputs.base_image_version }}
+          current-digest: ${{ steps.extract-base-image.outputs.current_digest }}
+          current-tag-digest: ${{ steps.current-digest.outputs.digest }}
+          latest-tag: ${{ steps.check-latest.outputs.latest_image_version }}
+          latest-tag-digest: ${{ steps.latest-digest.outputs.digest }}
+          change-type: ${{ steps.check-latest.outputs.change_type }}
+          version-update-available: ${{ steps.check-latest.outputs.update_available }}
+          digest-history: ${{ steps.history.outputs.digests }}
+
+      # Writes back the fully-qualified `image:tag@sha256:...` form. The tag
+      # stays human-readable and keeps version tracking working, while the
+      # digest makes the build reproducible, closes the monitor-to-build
+      # TOCTOU window, and records this exact artifact in git history.
+      - name: Pin base image in Dockerfile
+        id: update-dockerfile
+        if: ${{ steps.decide.outputs.should_update == 'true' }}
+        shell: bash
+        env:
+          DOCKERFILE_PATH: ${{ inputs.dockerfile-path }}
+          CURRENT_REFERENCE: ${{ steps.extract-base-image.outputs.image_reference }}
+          IMAGE_NAME: ${{ steps.extract-base-image.outputs.image_name }}
+          TARGET_TAG: ${{ steps.decide.outputs.target_tag }}
+          TARGET_DIGEST: ${{ steps.decide.outputs.target_digest }}
+          FROM_LINE_NUMBER: ${{ steps.extract-base-image.outputs.from_line_number }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$TARGET_DIGEST" ]; then
+            echo "::error::Refusing to write an unpinned base image reference."
+            exit 1
+          fi
+
+          NEW_REFERENCE="${IMAGE_NAME}:${TARGET_TAG}@${TARGET_DIGEST}"
+          echo "Rewriting line $FROM_LINE_NUMBER:"
+          echo "  from: $CURRENT_REFERENCE"
+          echo "    to: $NEW_REFERENCE"
+
+          CURRENT_REFERENCE="$CURRENT_REFERENCE" NEW_REFERENCE="$NEW_REFERENCE" \
+          awk -v line="$FROM_LINE_NUMBER" '
+            NR == line {
+              old = ENVIRON["CURRENT_REFERENCE"]; new = ENVIRON["NEW_REFERENCE"]
+              index_pos = index($0, old)
+              if (index_pos > 0) { $0 = substr($0, 1, index_pos - 1) new substr($0, index_pos + length(old)) }
+            }
+            { print }
+          ' "$DOCKERFILE_PATH" > "$DOCKERFILE_PATH.tmp"
+          mv "$DOCKERFILE_PATH.tmp" "$DOCKERFILE_PATH"
+
+          if git diff --quiet -- "$DOCKERFILE_PATH"; then
+            echo "::error::Dockerfile was not modified as expected."
+            exit 1
+          fi
+          git --no-pager diff -- "$DOCKERFILE_PATH"
+
+      - name: Create base image update pull request
+        id: create-pr
+        if: ${{ steps.decide.outputs.should_update == 'true' && steps.config.outputs.auto_create_pr == 'true' && inputs.dry-run != true }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DOCKERFILE_PATH: ${{ inputs.dockerfile-path }}
+          CURRENT_TAG: ${{ steps.extract-base-image.outputs.base_image_version }}
+          CURRENT_DIGEST: ${{ steps.extract-base-image.outputs.current_digest }}
+          NEW_TAG: ${{ steps.decide.outputs.target_tag }}
+          NEW_DIGEST: ${{ steps.decide.outputs.target_digest }}
+          IMAGE_NAME: ${{ steps.extract-base-image.outputs.image_name }}
+          UPDATE_KIND: ${{ steps.decide.outputs.update_kind }}
+          DECISION_REASON: ${{ steps.decide.outputs.reason }}
+          UPDATE_STRATEGY: ${{ steps.effective.outputs.update_strategy }}
+          UPDATE_POLICY: ${{ steps.effective.outputs.update_policy }}
+          PLATFORMS: ${{ steps.current-digest.outputs.platforms }}
+          PR_REVIEWERS: ${{ steps.effective.outputs.reviewers }}
+          PR_ASSIGNEES: ${{ steps.effective.outputs.assignees }}
+          AUTO_MERGE: ${{ steps.config.outputs.auto_merge }}
+          BLOCK_AUTO_MERGE: ${{ steps.decide.outputs.block_auto_merge }}
+        run: |
+          set -euo pipefail
+          BRANCH_NAME="${GITHUB_REF_NAME}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- "$DOCKERFILE_PATH"; then
+            echo "pr_url=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          case "$UPDATE_KIND" in
+            REBUILD)        TITLE="$CURRENT_TAG: upstream rebuild of base image (digest changed)" ;;
+            VERSION_UPDATE) TITLE="$NEW_TAG: update base image in Dockerfile" ;;
+            REPIN)          TITLE="$CURRENT_TAG: pin base image by digest" ;;
+            *)              TITLE="$NEW_TAG: update base image in Dockerfile" ;;
+          esac
+
+          git add "$DOCKERFILE_PATH"
+          git commit -m "$TITLE"
+
+          # Branch keyed by target digest so a later rebuild of the same tag
+          # opens a distinct PR instead of silently overwriting the previous
+          # one, which would lose review history.
+          SAFE_TAG="$(echo "$NEW_TAG" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-')"
+          SHORT_DIGEST="$(printf '%s' "$NEW_DIGEST" | sed 's/^sha256://' | cut -c1-12)"
+          UPDATE_BRANCH="automation/base-image-${SAFE_TAG}-${SHORT_DIGEST}"
+          git push --force-with-lease origin "HEAD:refs/heads/$UPDATE_BRANCH"
+
+          BODY="$(cat <<EOF
+          Automated base image update for \`${IMAGE_NAME}\`.
+
+          | | Before | After |
+          |---|---|---|
+          | **Tag** | \`${CURRENT_TAG}\` | \`${NEW_TAG}\` |
+          | **Digest** | \`${CURRENT_DIGEST:-not pinned}\` | \`${NEW_DIGEST}\` |
+
+          - **Change type:** \`${UPDATE_KIND}\`
+          - **Policy:** \`${UPDATE_POLICY}\` (strategy: \`${UPDATE_STRATEGY}\`)
+          - **Platforms:** ${PLATFORMS:-single-architecture}
+
+          ${DECISION_REASON}
+
+          The base image is pinned by digest, so this build is reproducible and
+          any future upstream rebuild will be detected as a new change.
+
+          Merging this pull request triggers the Docker Image Release workflow.
+          EOF
+          )"
+
+          PR_NUMBER="$(gh pr list --base "$BRANCH_NAME" --head "$UPDATE_BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$PR_NUMBER" ]; then
+            gh pr create --base "$BRANCH_NAME" --head "$UPDATE_BRANCH" \
+              --title "$TITLE" --body "$BODY"
+            PR_NUMBER="$(gh pr list --base "$BRANCH_NAME" --head "$UPDATE_BRANCH" --state open --json number --jq '.[0].number // empty')"
+            [ -n "$PR_NUMBER" ] && [ -n "$PR_REVIEWERS" ] && gh pr edit "$PR_NUMBER" --add-reviewer "$PR_REVIEWERS" || true
+            [ -n "$PR_NUMBER" ] && [ -n "$PR_ASSIGNEES" ] && gh pr edit "$PR_NUMBER" --add-assignee "$PR_ASSIGNEES" || true
+          fi
+
+          # Optional auto-merge: requires "Allow auto-merge" enabled in
+          # repository settings and branch protection required checks.
+          # PR still only merges once those checks/approvals are satisfied -
+          # this does not bypass governance, it just removes the manual
+          # "click merge" step once conditions are met.
+          #
+          # BLOCK_AUTO_MERGE is a security override from the policy engine:
+          # major upgrades, moving/mutable tags and rollback candidates
+          # always require a human, regardless of the auto_merge setting.
+          if [ -n "$PR_NUMBER" ] && [ "$AUTO_MERGE" = "true" ] && [ "$BLOCK_AUTO_MERGE" = "true" ]; then
+            echo "::notice::Auto-merge suppressed for PR #$PR_NUMBER - this change requires human review."
+          elif [ -n "$PR_NUMBER" ] && [ "$AUTO_MERGE" = "true" ]; then
+            gh pr merge "$PR_NUMBER" --auto --squash || echo "::warning::Failed to enable auto-merge on PR #$PR_NUMBER (check repository auto-merge setting)."
+          fi
+
+          PR_URL="$(gh pr view "$PR_NUMBER" --json url --jq '.url' 2>/dev/null || true)"
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Publish workflow summary
+        if: always()
+        shell: bash
+        env:
+          MONITOR_ENABLED: ${{ steps.config.outputs.monitor_enabled }}
+          IMAGE_NAME: ${{ steps.extract-base-image.outputs.image_name }}
+          REGISTRY: ${{ steps.extract-base-image.outputs.registry }}
+          CURRENT_TAG: ${{ steps.extract-base-image.outputs.base_image_version }}
+          CURRENT_DIGEST: ${{ steps.extract-base-image.outputs.current_digest }}
+          UPSTREAM_DIGEST: ${{ steps.current-digest.outputs.digest }}
+          PLATFORMS: ${{ steps.current-digest.outputs.platforms }}
+          LATEST_TAG: ${{ steps.check-latest.outputs.latest_image_version }}
+          CHANGE_TYPE: ${{ steps.check-latest.outputs.change_type }}
+          UPDATE_POLICY: ${{ steps.effective.outputs.update_policy }}
+          OUTCOME: ${{ steps.decide.outputs.outcome }}
+          UPDATE_KIND: ${{ steps.decide.outputs.update_kind }}
+          TARGET_DIGEST: ${{ steps.decide.outputs.target_digest }}
+          DECISION_REASON: ${{ steps.decide.outputs.reason }}
+          PR_URL: ${{ steps.create-pr.outputs.pr_url }}
+        run: |
+          {
+            printf '## Base Image Update Automation\n\n'
+            printf -- '- **Monitoring enabled:** `%s`\n' "${MONITOR_ENABLED:-true}"
+            printf -- '- **Image:** `%s` on `%s`\n' "${IMAGE_NAME:-unknown}" "${REGISTRY:-unknown}"
+            printf -- '- **Policy:** `%s`\n' "${UPDATE_POLICY:-DIGEST_AND_VERSION}"
+            printf '\n### Signals\n\n'
+            printf '| Signal | Pinned | Upstream |\n|---|---|---|\n'
+            printf '| Tag | `%s` | `%s` |\n' "${CURRENT_TAG:-unknown}" "${LATEST_TAG:-no newer tag}"
+            printf '| Digest | `%s` | `%s` |\n' "${CURRENT_DIGEST:-not pinned}" "${UPSTREAM_DIGEST:-not resolved}"
+            printf '\n'
+            printf -- '- **Platforms:** %s\n' "${PLATFORMS:-single-architecture}"
+            printf -- '- **Version change type:** `%s`\n' "${CHANGE_TYPE:-none}"
+            printf '\n### Decision\n\n'
+            printf -- '- **Outcome:** `%s` (`%s`)\n' "${OUTCOME:-IGNORE}" "${UPDATE_KIND:-NONE}"
+            printf -- '- **Target digest:** `%s`\n' "${TARGET_DIGEST:-none}"
+            printf -- '- **Reason:** %s\n' "${DECISION_REASON:-monitoring did not run}"
+            printf -- '- **PR:** %s\n' "${PR_URL:-none}"
+          } >> "$GITHUB_STEP_SUMMARY"

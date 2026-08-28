@@ -1,0 +1,279 @@
+name: 'Decide Base Image Update'
+description: >
+  Policy engine for base image monitoring. Takes the digest signal
+  (authoritative) and the version signal (semantic context) and decides
+  whether to update, ignore, or flag for human review.
+
+  Separating evidence-gathering from decision-making means new signals can
+  be added without touching decision logic, and the decision is auditable
+  from a single place.
+
+  Supported policies:
+    DIGEST_AND_VERSION (default) - digest drives updates, version adds
+                                   semantics and strategy gating
+    DIGEST_ONLY                  - any digest change is an update
+    VERSION_ONLY                 - legacy tag-comparison behaviour; cannot
+                                   detect same-tag rebuilds (not recommended)
+    STRICT_SEMVER                - only in-policy semantic version bumps
+    ALWAYS_UPDATE                - repin on every run
+
+inputs:
+  policy:
+    description: 'DIGEST_AND_VERSION | DIGEST_ONLY | VERSION_ONLY | STRICT_SEMVER | ALWAYS_UPDATE'
+    required: false
+    default: 'DIGEST_AND_VERSION'
+  update-strategy:
+    description: 'Maximum permitted semantic change: patch, minor or major'
+    required: false
+    default: 'patch'
+  current-tag:
+    description: 'Tag currently pinned in the Dockerfile'
+    required: true
+  current-digest:
+    description: 'Digest currently pinned in the Dockerfile, empty if not pinned'
+    required: false
+    default: ''
+  current-tag-digest:
+    description: 'Digest that the CURRENT tag resolves to upstream right now'
+    required: false
+    default: ''
+  latest-tag:
+    description: 'Newest eligible upstream tag, empty when version comparison is unavailable'
+    required: false
+    default: ''
+  latest-tag-digest:
+    description: 'Digest that the LATEST tag resolves to upstream right now'
+    required: false
+    default: ''
+  change-type:
+    description: 'patch, minor, major or none - semantic size of the version change'
+    required: false
+    default: 'none'
+  version-update-available:
+    description: '"true" when a newer eligible upstream tag exists'
+    required: false
+    default: 'false'
+  digest-history:
+    description: >
+      Newline-separated digests previously pinned by this repository, newest
+      first. Used to detect rollback to a superseded digest.
+    required: false
+    default: ''
+
+outputs:
+  should_update:
+    description: '"true" when the Dockerfile should be repinned'
+    value: ${{ steps.decide.outputs.should_update }}
+  outcome:
+    description: 'IGNORE | UPDATE | REVIEW'
+    value: ${{ steps.decide.outputs.outcome }}
+  update_kind:
+    description: 'NONE | REBUILD | VERSION_UPDATE | REPIN'
+    value: ${{ steps.decide.outputs.update_kind }}
+  target_tag:
+    description: 'Tag to pin after the update'
+    value: ${{ steps.decide.outputs.target_tag }}
+  target_digest:
+    description: 'Digest to pin after the update'
+    value: ${{ steps.decide.outputs.target_digest }}
+  block_auto_merge:
+    description: '"true" when this change must not be auto-merged'
+    value: ${{ steps.decide.outputs.block_auto_merge }}
+  reason:
+    description: 'Human-readable explanation of the decision'
+    value: ${{ steps.decide.outputs.reason }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: decide
+      shell: bash
+      env:
+        POLICY: ${{ inputs.policy }}
+        UPDATE_STRATEGY: ${{ inputs.update-strategy }}
+        CURRENT_TAG: ${{ inputs.current-tag }}
+        CURRENT_DIGEST: ${{ inputs.current-digest }}
+        CURRENT_TAG_DIGEST: ${{ inputs.current-tag-digest }}
+        LATEST_TAG: ${{ inputs.latest-tag }}
+        LATEST_TAG_DIGEST: ${{ inputs.latest-tag-digest }}
+        CHANGE_TYPE: ${{ inputs.change-type }}
+        VERSION_UPDATE_AVAILABLE: ${{ inputs.version-update-available }}
+        DIGEST_HISTORY: ${{ inputs.digest-history }}
+      run: |
+        set -euo pipefail
+
+        POLICY="$(printf '%s' "${POLICY:-DIGEST_AND_VERSION}" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
+        case "$POLICY" in
+          DIGEST_AND_VERSION|DIGEST_ONLY|VERSION_ONLY|STRICT_SEMVER|ALWAYS_UPDATE) ;;
+          *)
+            echo "::error::Invalid update policy '$POLICY'. Expected one of: DIGEST_AND_VERSION, DIGEST_ONLY, VERSION_ONLY, STRICT_SEMVER, ALWAYS_UPDATE."
+            exit 1
+            ;;
+        esac
+
+        STRATEGY="$(printf '%s' "${UPDATE_STRATEGY:-patch}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+
+        SHOULD_UPDATE=false
+        OUTCOME="IGNORE"
+        UPDATE_KIND="NONE"
+        BLOCK_AUTO_MERGE=false
+        TARGET_TAG="$CURRENT_TAG"
+        TARGET_DIGEST=""
+        REASON=""
+
+        # Is the semantic change within the repository's permitted strategy?
+        within_strategy() {
+          case "$STRATEGY" in
+            major) return 0 ;;
+            minor) [ "$1" = "patch" ] || [ "$1" = "minor" ] ;;
+            patch) [ "$1" = "patch" ] ;;
+            *) return 1 ;;
+          esac
+        }
+
+        # A digest we previously pinned and have since moved on from
+        # reappearing upstream is a rollback signal, not a routine update.
+        is_superseded_digest() {
+          local candidate="$1"
+          [ -n "$candidate" ] || return 1
+          [ -n "$DIGEST_HISTORY" ] || return 1
+          printf '%s\n' "$DIGEST_HISTORY" | grep -Fxq "$candidate"
+        }
+
+        VERSION_CHANGED=false
+        [ "$VERSION_UPDATE_AVAILABLE" = "true" ] && [ -n "$LATEST_TAG" ] && VERSION_CHANGED=true
+
+        # Digest drift on the CURRENT tag means the publisher rebuilt the
+        # image without changing the tag - the case tag comparison misses.
+        DIGEST_CHANGED=false
+        if [ -n "$CURRENT_DIGEST" ] && [ -n "$CURRENT_TAG_DIGEST" ] \
+           && [ "$CURRENT_DIGEST" != "$CURRENT_TAG_DIGEST" ]; then
+          DIGEST_CHANGED=true
+        fi
+
+        # Not yet digest-pinned: adopting a pin is itself a useful change.
+        NEEDS_INITIAL_PIN=false
+        if [ -z "$CURRENT_DIGEST" ] && [ -n "$CURRENT_TAG_DIGEST" ]; then
+          NEEDS_INITIAL_PIN=true
+        fi
+
+        case "$POLICY" in
+          ALWAYS_UPDATE)
+            SHOULD_UPDATE=true
+            OUTCOME="UPDATE"
+            UPDATE_KIND="REPIN"
+            if [ "$VERSION_CHANGED" = "true" ]; then
+              TARGET_TAG="$LATEST_TAG"; TARGET_DIGEST="$LATEST_TAG_DIGEST"; UPDATE_KIND="VERSION_UPDATE"
+            else
+              TARGET_DIGEST="$CURRENT_TAG_DIGEST"
+            fi
+            REASON="ALWAYS_UPDATE policy: repinning to the current upstream state."
+            ;;
+
+          VERSION_ONLY)
+            if [ "$VERSION_CHANGED" = "true" ] && within_strategy "$CHANGE_TYPE"; then
+              SHOULD_UPDATE=true; OUTCOME="UPDATE"; UPDATE_KIND="VERSION_UPDATE"
+              TARGET_TAG="$LATEST_TAG"; TARGET_DIGEST="$LATEST_TAG_DIGEST"
+              REASON="Version update ${CURRENT_TAG} -> ${LATEST_TAG} (${CHANGE_TYPE})."
+            elif [ "$VERSION_CHANGED" = "true" ]; then
+              OUTCOME="REVIEW"; BLOCK_AUTO_MERGE=true
+              REASON="Upstream ${LATEST_TAG} is a ${CHANGE_TYPE} change, which exceeds the '${STRATEGY}' strategy."
+            else
+              REASON="No newer upstream tag. Note: VERSION_ONLY cannot detect same-tag rebuilds."
+            fi
+            ;;
+
+          STRICT_SEMVER)
+            if [ "$VERSION_CHANGED" = "true" ] && within_strategy "$CHANGE_TYPE"; then
+              SHOULD_UPDATE=true; OUTCOME="UPDATE"; UPDATE_KIND="VERSION_UPDATE"
+              TARGET_TAG="$LATEST_TAG"; TARGET_DIGEST="$LATEST_TAG_DIGEST"
+              REASON="Semantic ${CHANGE_TYPE} update ${CURRENT_TAG} -> ${LATEST_TAG}."
+            else
+              REASON="No in-policy semantic version change available."
+            fi
+            ;;
+
+          DIGEST_ONLY)
+            if [ "$DIGEST_CHANGED" = "true" ]; then
+              SHOULD_UPDATE=true; OUTCOME="UPDATE"; UPDATE_KIND="REBUILD"
+              TARGET_DIGEST="$CURRENT_TAG_DIGEST"
+              REASON="Upstream rebuilt ${CURRENT_TAG} under the same tag (digest changed)."
+            elif [ "$NEEDS_INITIAL_PIN" = "true" ]; then
+              SHOULD_UPDATE=true; OUTCOME="UPDATE"; UPDATE_KIND="REPIN"
+              TARGET_DIGEST="$CURRENT_TAG_DIGEST"
+              REASON="Adopting a digest pin for ${CURRENT_TAG}."
+            else
+              REASON="Digest unchanged for ${CURRENT_TAG}."
+            fi
+            ;;
+
+          DIGEST_AND_VERSION)
+            if [ "$VERSION_CHANGED" = "true" ] && within_strategy "$CHANGE_TYPE"; then
+              SHOULD_UPDATE=true; OUTCOME="UPDATE"; UPDATE_KIND="VERSION_UPDATE"
+              TARGET_TAG="$LATEST_TAG"; TARGET_DIGEST="$LATEST_TAG_DIGEST"
+              REASON="Version update ${CURRENT_TAG} -> ${LATEST_TAG} (${CHANGE_TYPE})."
+            elif [ "$VERSION_CHANGED" = "true" ] && [ "$DIGEST_CHANGED" = "true" ]; then
+              # Out-of-policy version bump, but the pinned tag was also
+              # rebuilt: take the safe in-place rebuild, surface the rest.
+              SHOULD_UPDATE=true; OUTCOME="UPDATE"; UPDATE_KIND="REBUILD"
+              TARGET_DIGEST="$CURRENT_TAG_DIGEST"
+              REASON="Upstream rebuilt ${CURRENT_TAG} (digest changed). A ${CHANGE_TYPE} upgrade to ${LATEST_TAG} is also available but exceeds the '${STRATEGY}' strategy."
+            elif [ "$VERSION_CHANGED" = "true" ]; then
+              OUTCOME="REVIEW"; BLOCK_AUTO_MERGE=true
+              REASON="Upstream ${LATEST_TAG} is a ${CHANGE_TYPE} change, which exceeds the '${STRATEGY}' strategy. Review and bump the strategy to adopt it."
+            elif [ "$DIGEST_CHANGED" = "true" ]; then
+              SHOULD_UPDATE=true; OUTCOME="UPDATE"; UPDATE_KIND="REBUILD"
+              TARGET_DIGEST="$CURRENT_TAG_DIGEST"
+              REASON="Upstream rebuilt ${CURRENT_TAG} under the same tag (digest changed) - typically a security or base image refresh."
+            elif [ "$NEEDS_INITIAL_PIN" = "true" ]; then
+              SHOULD_UPDATE=true; OUTCOME="UPDATE"; UPDATE_KIND="REPIN"
+              TARGET_DIGEST="$CURRENT_TAG_DIGEST"
+              REASON="Adopting a digest pin for ${CURRENT_TAG} so future rebuilds are detectable."
+            else
+              REASON="Base image is up to date: no version change and no digest drift."
+            fi
+            ;;
+        esac
+
+        # ---- Security overrides, applied after the policy decision ----
+        if [ "$SHOULD_UPDATE" = "true" ] && is_superseded_digest "$TARGET_DIGEST"; then
+          SHOULD_UPDATE=false
+          OUTCOME="REVIEW"
+          BLOCK_AUTO_MERGE=true
+          REASON="Rollback detected: ${TARGET_DIGEST} was previously pinned and superseded by this repository. Refusing to repin automatically."
+          echo "::warning::$REASON"
+        fi
+
+        if [ "$UPDATE_KIND" = "VERSION_UPDATE" ] && [ "$CHANGE_TYPE" = "major" ]; then
+          BLOCK_AUTO_MERGE=true
+        fi
+
+        # Moving tags (latest/stable, or any tag with no numeric version)
+        # can be repointed arbitrarily, so they always need human eyes.
+        if [ "$SHOULD_UPDATE" = "true" ] && ! printf '%s' "$CURRENT_TAG" | grep -qE '[0-9]'; then
+          BLOCK_AUTO_MERGE=true
+        fi
+
+        if [ "$SHOULD_UPDATE" = "true" ] && [ -z "$TARGET_DIGEST" ]; then
+          SHOULD_UPDATE=false
+          OUTCOME="REVIEW"
+          REASON="Could not resolve a digest for the update target; refusing to write an unpinned reference."
+          echo "::warning::$REASON"
+        fi
+
+        echo "Policy:        $POLICY"
+        echo "Strategy:      $STRATEGY"
+        echo "Outcome:       $OUTCOME ($UPDATE_KIND)"
+        echo "Target:        ${TARGET_TAG}@${TARGET_DIGEST:-<none>}"
+        echo "Block merge:   $BLOCK_AUTO_MERGE"
+        echo "Reason:        $REASON"
+
+        {
+          echo "should_update=$SHOULD_UPDATE"
+          echo "outcome=$OUTCOME"
+          echo "update_kind=$UPDATE_KIND"
+          echo "target_tag=$TARGET_TAG"
+          echo "target_digest=$TARGET_DIGEST"
+          echo "block_auto_merge=$BLOCK_AUTO_MERGE"
+          echo "reason=$REASON"
+        } >> "$GITHUB_OUTPUT"

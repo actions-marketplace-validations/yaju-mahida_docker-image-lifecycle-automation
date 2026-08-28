@@ -1,0 +1,284 @@
+name: 'Check Latest Upstream Tag'
+description: >
+  Queries any OCI Distribution Spec compliant registry's tag list and
+  determines the newest upstream tag that shares the current tag's "flavour"
+  (prefix + variant suffix) and falls within the configured update strategy
+  (patch/minor/major).
+
+  Registry authentication is discovered from the registry's own
+  WWW-Authenticate challenge, so this works against Docker Hub, GHCR, ACR,
+  ECR, Quay, Harbor, Artifactory, GitLab, Oracle and generic/private OCI
+  registries without registry-specific code.
+
+  This provides the VERSION signal only. It cannot detect a publisher
+  rebuilding an image under an unchanged tag - that requires the digest
+  signal from resolve-image-digest.
+
+inputs:
+  registry:
+    description: 'Registry host (e.g. docker.io, ghcr.io, myreg.azurecr.io)'
+    required: false
+    default: 'docker.io'
+  repository-path:
+    description: 'Repository path (e.g. library/wordpress, org/app)'
+    required: true
+  current-tag:
+    description: 'The tag currently pinned in the Dockerfile'
+    required: true
+  update-strategy:
+    description: 'One of: patch, minor, major. Defaults to patch.'
+    required: false
+    default: 'patch'
+  username:
+    description: 'Optional registry username for private/rate-limited registries'
+    required: false
+    default: ''
+  password:
+    description: 'Optional registry password or token'
+    required: false
+    default: ''
+
+outputs:
+  latest_image_version:
+    description: 'Newest eligible upstream tag'
+    value: ${{ steps.check.outputs.latest_image_version }}
+  update_available:
+    description: '"true" when a newer eligible upstream tag was found'
+    value: ${{ steps.check.outputs.update_available }}
+  update_strategy:
+    description: 'The effective (validated) strategy used for this run'
+    value: ${{ steps.check.outputs.update_strategy }}
+  change_type:
+    description: 'patch, minor, major or none - the semantic size of the version change'
+    value: ${{ steps.check.outputs.change_type }}
+  version_comparable:
+    description: '"true" when the current tag carried a parseable numeric version'
+    value: ${{ steps.check.outputs.version_comparable }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: check
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        REPOSITORY_PATH: ${{ inputs.repository-path }}
+        CURRENT_TAG: ${{ inputs.current-tag }}
+        IMAGE_UPDATE_STRATEGY: ${{ inputs.update-strategy }}
+        REGISTRY_USERNAME: ${{ inputs.username }}
+        REGISTRY_PASSWORD: ${{ inputs.password }}
+      run: |
+        set -euo pipefail
+
+        {
+          echo "update_available=false"
+          echo "change_type=none"
+          echo "version_comparable=false"
+        } >> "$GITHUB_OUTPUT"
+
+        if [ -z "$REPOSITORY_PATH" ]; then
+          echo "::warning::No repository path supplied; skipping version check."
+          exit 0
+        fi
+
+        UPDATE_STRATEGY="${IMAGE_UPDATE_STRATEGY:-patch}"
+        UPDATE_STRATEGY="$(printf '%s' "$UPDATE_STRATEGY" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+
+        case "$UPDATE_STRATEGY" in
+          patch|minor|major) ;;
+          *)
+            echo "::error::Invalid update strategy: '${IMAGE_UPDATE_STRATEGY}'. Expected one of: patch, minor, major."
+            exit 1
+            ;;
+        esac
+        echo "Update strategy: $UPDATE_STRATEGY"
+        echo "update_strategy=$UPDATE_STRATEGY" >> "$GITHUB_OUTPUT"
+
+        # Extract a numeric version from anywhere in the tag, tolerating a
+        # non-numeric prefix (e.g. "php8.5-apache" -> prefix "php", version
+        # "8.5", suffix "-apache") as well as the simpler "6.4-apache" case
+        # (empty prefix). Candidates must share the same prefix and suffix
+        # ("flavour") to be considered comparable.
+        TAG_PREFIX=""
+        CURRENT_VERSION=""
+        TAG_SUFFIX=""
+        if [[ "$CURRENT_TAG" =~ ^([^0-9]*)([0-9]+(\.[0-9]+)*)(.*)$ ]]; then
+          TAG_PREFIX="${BASH_REMATCH[1]}"
+          CURRENT_VERSION="${BASH_REMATCH[2]}"
+          TAG_SUFFIX="${BASH_REMATCH[4]}"
+        fi
+        if [ -z "$CURRENT_VERSION" ]; then
+          echo "::warning::Current tag '$CURRENT_TAG' has no numeric version, so upstream versions cannot be compared. Digest comparison remains the authoritative update signal for this image."
+          exit 0
+        fi
+        echo "version_comparable=true" >> "$GITHUB_OUTPUT"
+
+        CURRENT_MAJOR="$(printf '%s' "$CURRENT_VERSION" | cut -d. -f1)"
+        CURRENT_SERIES="$(printf '%s' "$CURRENT_VERSION" | cut -d. -f1-2)"
+        echo "Current version: $CURRENT_VERSION | prefix: ${TAG_PREFIX:-<none>} | suffix: ${TAG_SUFFIX:-<none>} | major: $CURRENT_MAJOR | series: $CURRENT_SERIES"
+
+        API_HOST="$REGISTRY"
+        [ "$REGISTRY" = "docker.io" ] && API_HOST="registry-1.docker.io"
+
+        # ---- Discover auth from the registry's own WWW-Authenticate challenge ----
+        CHALLENGE="$(
+          curl -sS -o /dev/null -D - "https://${API_HOST}/v2/" 2>/dev/null \
+          | tr -d '\r' \
+          | awk 'BEGIN{IGNORECASE=1} /^www-authenticate:/{sub(/^[^:]*:[[:space:]]*/,""); print; exit}'
+        )" || CHALLENGE=""
+
+        AUTH_HEADER=""
+        case "$CHALLENGE" in
+          [Bb]earer*)
+            REALM="$(printf '%s' "$CHALLENGE" | sed -nE 's/.*[Rr]ealm="([^"]+)".*/\1/p')"
+            SERVICE="$(printf '%s' "$CHALLENGE" | sed -nE 's/.*[Ss]ervice="([^"]+)".*/\1/p')"
+            if [ -n "$REALM" ]; then
+              TOKEN_URL="${REALM}?scope=repository:${REPOSITORY_PATH}:pull"
+              [ -n "$SERVICE" ] && TOKEN_URL="${TOKEN_URL}&service=${SERVICE}"
+              if [ -n "$REGISTRY_USERNAME" ]; then
+                TOKEN_RESPONSE="$(curl -sS --retry 3 --retry-delay 2 --retry-all-errors \
+                  -u "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" "$TOKEN_URL" || true)"
+              else
+                TOKEN_RESPONSE="$(curl -sS --retry 3 --retry-delay 2 --retry-all-errors "$TOKEN_URL" || true)"
+              fi
+              REG_TOKEN="$(printf '%s' "$TOKEN_RESPONSE" | jq -r '.token // .access_token // empty' 2>/dev/null || true)"
+              if [ -n "$REG_TOKEN" ]; then
+                echo "::add-mask::$REG_TOKEN"
+                AUTH_HEADER="Authorization: Bearer ${REG_TOKEN}"
+              fi
+            fi
+            ;;
+          *)
+            if [ -n "$REGISTRY_USERNAME" ]; then
+              BASIC="$(printf '%s:%s' "$REGISTRY_USERNAME" "$REGISTRY_PASSWORD" | base64 -w0)"
+              echo "::add-mask::$BASIC"
+              AUTH_HEADER="Authorization: Basic ${BASIC}"
+            fi
+            ;;
+        esac
+
+        API_URL="https://${API_HOST}/v2/${REPOSITORY_PATH}/tags/list?n=100"
+        : > all_tags.txt
+        PAGE_COUNT=0
+        MAX_PAGES=50
+
+        while [ -n "$API_URL" ] && [ "$API_URL" != "null" ]; do
+          PAGE_COUNT=$((PAGE_COUNT + 1))
+          if [ "$PAGE_COUNT" -gt "$MAX_PAGES" ]; then
+            echo "::warning::Reached maximum page limit ($MAX_PAGES); using tags collected so far."
+            break
+          fi
+
+          RESPONSE_HEADERS="$(mktemp)"
+          if ! RESPONSE="$(curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -D "$RESPONSE_HEADERS" -H "$AUTH_HEADER" "$API_URL")"; then
+            rm -f "$RESPONSE_HEADERS"
+            echo "::error::Failed to query Docker Registry tags API for '$REPOSITORY_PATH'."
+            exit 1
+          fi
+
+          printf '%s' "$RESPONSE" | jq -r '.tags[]?' | tr -d '\r' >> all_tags.txt
+
+          API_URL="$(
+            awk 'BEGIN { IGNORECASE = 1 } /^Link:/ { print }' "$RESPONSE_HEADERS" \
+            | sed -nE 's/.*<([^>]+)>;[[:space:]]*rel="next".*/\1/p' \
+            | head -n 1
+          )"
+          rm -f "$RESPONSE_HEADERS"
+
+          if [ -n "$API_URL" ] && ! printf '%s' "$API_URL" | grep -qE '^https?://'; then
+            API_URL="https://registry-1.docker.io${API_URL}"
+          fi
+        done
+
+        TAG_TOTAL="$(wc -l < all_tags.txt)"
+        echo "Retrieved $TAG_TOTAL tags across $PAGE_COUNT page(s)."
+
+        : > candidate_versions.txt
+        SKIPPED_NON_NUMERIC=0
+
+        while IFS= read -r TAG; do
+          [ -n "$TAG" ] || continue
+
+          # Must share the same prefix and suffix ("flavour") as the
+          # current tag, e.g. prefix "php" / suffix "-apache" for
+          # "php8.5-apache", to be considered a comparable candidate.
+          if [ -n "$TAG_PREFIX" ]; then
+            case "$TAG" in
+              "$TAG_PREFIX"*) ;;
+              *) continue ;;
+            esac
+          fi
+          CANDIDATE_NO_PREFIX="${TAG#$TAG_PREFIX}"
+          CANDIDATE_SUFFIX_STRIPPED="${CANDIDATE_NO_PREFIX%$TAG_SUFFIX}"
+
+          if [ -n "$TAG_SUFFIX" ] && [ "$CANDIDATE_SUFFIX_STRIPPED" = "$CANDIDATE_NO_PREFIX" ]; then
+            continue
+          fi
+
+          if ! printf '%s' "$CANDIDATE_SUFFIX_STRIPPED" | grep -qE '^[0-9]+(\.[0-9]+)*$'; then
+            SKIPPED_NON_NUMERIC=$((SKIPPED_NON_NUMERIC + 1))
+            continue
+          fi
+
+          CANDIDATE_MAJOR="$(printf '%s' "$CANDIDATE_SUFFIX_STRIPPED" | cut -d. -f1)"
+          CANDIDATE_SERIES="$(printf '%s' "$CANDIDATE_SUFFIX_STRIPPED" | cut -d. -f1-2)"
+
+          case "$UPDATE_STRATEGY" in
+            patch)
+              [ "$CANDIDATE_SERIES" = "$CURRENT_SERIES" ] || continue
+              ;;
+            minor)
+              [ "$CANDIDATE_MAJOR" = "$CURRENT_MAJOR" ] || continue
+              ;;
+            major)
+              ;;
+          esac
+
+          printf '%s\n' "$CANDIDATE_SUFFIX_STRIPPED" >> candidate_versions.txt
+        done < all_tags.txt
+
+        if [ "$SKIPPED_NON_NUMERIC" -gt 0 ]; then
+          echo "::warning::Skipped $SKIPPED_NON_NUMERIC upstream tag(s) without a numeric version."
+        fi
+
+        CANDIDATE_COUNT="$(wc -l < candidate_versions.txt)"
+        echo "Eligible candidates under '$UPDATE_STRATEGY': $CANDIDATE_COUNT"
+
+        LATEST_TAG="$(sort -V -u candidate_versions.txt | tail -n 1)"
+        if [ -z "$LATEST_TAG" ]; then
+          echo "::warning::No comparable upstream tags found for '$REPOSITORY_PATH'. Skipping."
+          exit 0
+        fi
+
+        LATEST_IMAGE_VERSION="${TAG_PREFIX}${LATEST_TAG}${TAG_SUFFIX}"
+        echo "Latest matching upstream tag: $LATEST_IMAGE_VERSION"
+        echo "latest_image_version=$LATEST_IMAGE_VERSION" >> "$GITHUB_OUTPUT"
+
+        if [ "$LATEST_IMAGE_VERSION" = "$CURRENT_TAG" ] || [ "$LATEST_TAG" = "$CURRENT_VERSION" ]; then
+          echo "Base image is already up to date ($CURRENT_TAG). No update required."
+          exit 0
+        fi
+
+        HIGHEST="$(printf '%s\n%s\n' "$CURRENT_VERSION" "$LATEST_TAG" | sort -V | tail -n 1)"
+        if [ "$HIGHEST" != "$LATEST_TAG" ]; then
+          echo "Upstream tag '$LATEST_IMAGE_VERSION' is not newer than '$CURRENT_TAG'. No update required."
+          exit 0
+        fi
+
+        # Classify the semantic size of the change so the policy engine can
+        # gate on it (e.g. auto-merge patches, flag majors for review).
+        LATEST_MAJOR="$(printf '%s' "$LATEST_TAG" | cut -d. -f1)"
+        LATEST_SERIES="$(printf '%s' "$LATEST_TAG" | cut -d. -f1-2)"
+        if [ "$LATEST_MAJOR" != "$CURRENT_MAJOR" ]; then
+          CHANGE_TYPE="major"
+        elif [ "$LATEST_SERIES" != "$CURRENT_SERIES" ]; then
+          CHANGE_TYPE="minor"
+        else
+          CHANGE_TYPE="patch"
+        fi
+
+        echo "Update available ($UPDATE_STRATEGY strategy, $CHANGE_TYPE change): $CURRENT_TAG -> $LATEST_IMAGE_VERSION"
+        {
+          echo "update_available=true"
+          echo "change_type=$CHANGE_TYPE"
+        } >> "$GITHUB_OUTPUT"

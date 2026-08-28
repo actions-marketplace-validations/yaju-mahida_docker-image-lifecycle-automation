@@ -1,0 +1,760 @@
+name: Reusable - Docker Image Release
+
+# REUSABLE WORKFLOW
+# Callable via `workflow_call` from any consumer repository that owns a
+# Dockerfile. Orchestrates the full lifecycle: config load, dynamic
+# path-relevance gate, version calculation, build (multi-arch), test,
+# vulnerability scan + SBOM, tag/release/changelog, and publish to one or
+# more registries behind an environment approval gate.
+#
+# TRIGGER GUIDANCE (see docs/REUSABLE_AUTOMATION.md): consumers should call
+# this workflow from a `push` trigger on their release branch(es) - never
+# from `workflow_run` or directly from the monitor workflow. A merged PR
+# landing on the release branch is the sole authoritative trigger.
+#
+# CONFIGURATION: dockerfile/build-context/platforms/test-command/
+# environment/scan-severity-threshold/target-registries are all read from
+# the consumer repository's .github/docker-automation.yml via
+# load-automation-config when the corresponding `with:` input is left
+# empty, so behaviour can change without editing any workflow file. The
+# static `paths`/`paths-ignore` trigger filter still lives in the caller's
+# workflow YAML (GitHub evaluates it pre-checkout and it cannot be sourced
+# from a config file) - this workflow ADDITIONALLY applies the config
+# file's paths_ignore dynamically via check-paths-changed, so it is a real,
+# config-driven gate rather than a documentation-only value.
+#
+# Consumers should reference this workflow with a pinned version, e.g.:
+#   uses: <org>/docker-image-lifecycle/.github/workflows/reusable-docker-release.yml@v1
+
+on:
+  workflow_call:
+    inputs:
+      config-path:
+        type: string
+        required: false
+        default: '.github/docker-automation.yml'
+      config-env:
+        description: 'Newline-separated KEY=VALUE pairs to expand ${VAR} placeholders in the config file'
+        type: string
+        required: false
+        default: ''
+      dockerfile-path:
+        description: 'Empty = use config file value'
+        type: string
+        required: false
+        default: ''
+      build-context:
+        description: 'Empty = use config file value'
+        type: string
+        required: false
+        default: ''
+      platforms:
+        description: 'Comma-separated build platforms, e.g. linux/amd64,linux/arm64. Empty = use config file value.'
+        type: string
+        required: false
+        default: ''
+      build-args:
+        description: 'Newline-separated extra build-args passed to docker/build-push-action'
+        type: string
+        required: false
+        default: ''
+      test-command:
+        description: 'Empty = use config file value (may also be empty there, disabling the test stage)'
+        type: string
+        required: false
+        default: ''
+      scan-severity-threshold:
+        description: 'Trivy severity levels that fail the scan gate. Empty = use config file value.'
+        type: string
+        required: false
+        default: ''
+      target-registries:
+        description: >
+          JSON array of registry targets to publish to. Empty = use
+          variable/config-driven resolution. Supported types: ghcr,
+          dockerhub, acr, ecr, quay, harbor, artifactory, gitlab,
+          digitalocean, ocir, private.
+        type: string
+        required: false
+        default: ''
+      environment:
+        description: 'GitHub environment used to gate the publish job. Empty = use variable/config file value.'
+        type: string
+        required: false
+        default: ''
+      dry-run:
+        type: boolean
+        required: false
+        default: true
+      # ---------------------------------------------------------------
+      # Repository-Variable passthrough (see reusable-base-image-monitor.yml
+      # for why this must be explicit). Precedence: explicit `with:` input
+      # above (if set) > these var-* inputs > docker-automation.yml >
+      # hardcoded default.
+      # ---------------------------------------------------------------
+      var-dockerfile:
+        type: string
+        required: false
+        default: ''
+      var-build-context:
+        type: string
+        required: false
+        default: ''
+      var-platforms:
+        type: string
+        required: false
+        default: ''
+      var-test-command:
+        type: string
+        required: false
+        default: ''
+      var-environment:
+        type: string
+        required: false
+        default: ''
+      var-scan-severity-threshold:
+        type: string
+        required: false
+        default: ''
+      var-release-tag-strategy:
+        description: 'RELEASE_TAG_STRATEGY Repository Variable'
+        type: string
+        required: false
+        default: ''
+      var-release-prefix:
+        description: 'RELEASE_PREFIX Repository Variable'
+        type: string
+        required: false
+        default: ''
+      var-release-increment-basename:
+        description: 'RELEASE_INCREMENT_BASENAME Repository Variable'
+        type: string
+        required: false
+        default: ''
+      var-release-semver-initial:
+        description: 'RELEASE_SEMVER_INITIAL Repository Variable'
+        type: string
+        required: false
+        default: ''
+      var-release-semver-bump:
+        description: 'RELEASE_SEMVER_BUMP Repository Variable'
+        type: string
+        required: false
+        default: ''
+      var-publish-upstream-tag-alias:
+        description: 'PUBLISH_UPSTREAM_TAG_ALIAS Repository Variable'
+        type: string
+        required: false
+        default: ''
+      var-sign-images:
+        description: 'SIGN_IMAGES Repository Variable'
+        type: string
+        required: false
+        default: ''
+      var-paths-ignore:
+        description: 'PATHS_IGNORE Repository Variable, as a JSON array string'
+        type: string
+        required: false
+        default: ''
+      var-image-name:
+        description: 'IMAGE_NAME Repository Variable - shared default image path for any PUBLISH_<TYPE>=true registry left without its own <TYPE>_IMAGE'
+        type: string
+        required: false
+        default: ''
+      var-publish-ghcr:
+        type: string
+        required: false
+        default: ''
+      var-ghcr-image:
+        type: string
+        required: false
+        default: ''
+      var-publish-dockerhub:
+        type: string
+        required: false
+        default: ''
+      var-dockerhub-image:
+        type: string
+        required: false
+        default: ''
+      var-publish-acr:
+        type: string
+        required: false
+        default: ''
+      var-acr-image:
+        type: string
+        required: false
+        default: ''
+      var-publish-ecr:
+        type: string
+        required: false
+        default: ''
+      var-ecr-image:
+        type: string
+        required: false
+        default: ''
+      var-aws-region:
+        type: string
+        required: false
+        default: ''
+      var-publish-quay:
+        type: string
+        required: false
+        default: ''
+      var-quay-image:
+        type: string
+        required: false
+        default: ''
+      var-publish-harbor:
+        type: string
+        required: false
+        default: ''
+      var-harbor-image:
+        type: string
+        required: false
+        default: ''
+      var-harbor-registry-host:
+        type: string
+        required: false
+        default: ''
+      var-publish-artifactory:
+        type: string
+        required: false
+        default: ''
+      var-artifactory-image:
+        type: string
+        required: false
+        default: ''
+      var-artifactory-registry-host:
+        type: string
+        required: false
+        default: ''
+      var-publish-gitlab:
+        type: string
+        required: false
+        default: ''
+      var-gitlab-image:
+        type: string
+        required: false
+        default: ''
+      var-gitlab-registry-host:
+        type: string
+        required: false
+        default: ''
+      var-publish-digitalocean:
+        type: string
+        required: false
+        default: ''
+      var-digitalocean-image:
+        type: string
+        required: false
+        default: ''
+      var-publish-ocir:
+        type: string
+        required: false
+        default: ''
+      var-ocir-image:
+        type: string
+        required: false
+        default: ''
+      var-ocir-registry-host:
+        type: string
+        required: false
+        default: ''
+      var-publish-private:
+        type: string
+        required: false
+        default: ''
+      var-private-image:
+        type: string
+        required: false
+        default: ''
+      var-private-registry-host:
+        type: string
+        required: false
+        default: ''
+      automation-ref:
+        description: >
+          Deprecated and unused. GitHub Actions does not support expressions
+          in a step's `uses:` key, so this input can no longer control which
+          ref this workflow's own composite actions resolve to - they always
+          use the same ref this reusable workflow was called with (e.g. the
+          "@v1" in your `uses:` line). Kept only so existing callers that
+          still pass this input do not break; safe to remove from callers.
+        type: string
+        required: false
+        default: 'v1'
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+      ACR_USERNAME:
+        required: false
+      ACR_PASSWORD:
+        required: false
+      AWS_ROLE_ARN:
+        required: false
+      QUAY_USERNAME:
+        required: false
+      QUAY_TOKEN:
+        required: false
+      HARBOR_USERNAME:
+        required: false
+      HARBOR_PASSWORD:
+        required: false
+      ARTIFACTORY_USERNAME:
+        required: false
+      ARTIFACTORY_TOKEN:
+        required: false
+      GITLAB_USERNAME:
+        required: false
+      GITLAB_TOKEN:
+        required: false
+      DIGITALOCEAN_TOKEN:
+        required: false
+      OCIR_USERNAME:
+        required: false
+      OCIR_TOKEN:
+        required: false
+      PRIVATE_REGISTRY_USERNAME:
+        required: false
+      PRIVATE_REGISTRY_PASSWORD:
+        required: false
+    outputs:
+      new_git_tag:
+        value: ${{ jobs.version.outputs.new_git_tag }}
+      release_url:
+        value: ${{ jobs.release.outputs.release_url }}
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+  id-token: write
+
+concurrency:
+  group: docker-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------
+  # STAGE: Configuration Load + Dynamic Path-Relevance Gate
+  # ---------------------------------------------------------------------
+  config:
+    name: Load Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      has_relevant_changes: ${{ steps.paths.outputs.has_relevant_changes }}
+      dockerfile: ${{ steps.effective.outputs.dockerfile }}
+      build_context: ${{ steps.effective.outputs.build_context }}
+      platforms: ${{ steps.effective.outputs.platforms }}
+      test_command: ${{ steps.effective.outputs.test_command }}
+      scan_severity_threshold: ${{ steps.effective.outputs.scan_severity_threshold }}
+      release_tag_strategy: ${{ steps.effective.outputs.release_tag_strategy }}
+      release_prefix: ${{ steps.effective.outputs.release_prefix }}
+      release_increment_basename: ${{ steps.effective.outputs.release_increment_basename }}
+      release_semver_initial: ${{ steps.effective.outputs.release_semver_initial }}
+      release_semver_bump: ${{ steps.effective.outputs.release_semver_bump }}
+      publish_upstream_tag_alias: ${{ steps.effective.outputs.publish_upstream_tag_alias }}
+      sign_images: ${{ steps.effective.outputs.sign_images }}
+      environment: ${{ steps.effective.outputs.environment }}
+      target_registries: ${{ steps.effective.outputs.target_registries }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - id: load
+        uses: $/.github/actions/load-automation-config
+        with:
+          config-path: ${{ inputs.config-path }}
+          env-overrides: ${{ inputs.config-env }}
+          var-dockerfile: ${{ inputs.var-dockerfile }}
+          var-build-context: ${{ inputs.var-build-context }}
+          var-platforms: ${{ inputs.var-platforms }}
+          var-test-command: ${{ inputs.var-test-command }}
+          var-environment: ${{ inputs.var-environment }}
+          var-scan-severity-threshold: ${{ inputs.var-scan-severity-threshold }}
+          var-release-tag-strategy: ${{ inputs.var-release-tag-strategy }}
+          var-release-prefix: ${{ inputs.var-release-prefix }}
+          var-release-increment-basename: ${{ inputs.var-release-increment-basename }}
+          var-release-semver-initial: ${{ inputs.var-release-semver-initial }}
+          var-release-semver-bump: ${{ inputs.var-release-semver-bump }}
+          var-publish-upstream-tag-alias: ${{ inputs.var-publish-upstream-tag-alias }}
+          var-sign-images: ${{ inputs.var-sign-images }}
+          var-paths-ignore: ${{ inputs.var-paths-ignore }}
+
+      # Makes `paths_ignore` a real config-driven setting, since (unlike a
+      # trigger's static paths-ignore) this evaluates inside the job.
+      - id: paths
+        uses: $/.github/actions/check-paths-changed
+        with:
+          patterns: ${{ steps.load.outputs.paths_ignore }}
+
+      # Resolves the publish matrix from PUBLISH_<TYPE>/<TYPE>_IMAGE
+      # Repository Variables first, falling back to the config file's
+      # release.registries array for any registry type not covered by a
+      # variable - see .github/actions/resolve-registries.
+      - id: registries
+        uses: $/.github/actions/resolve-registries
+        with:
+          image-name: ${{ inputs.var-image-name }}
+          publish-ghcr: ${{ inputs.var-publish-ghcr }}
+          ghcr-image: ${{ inputs.var-ghcr-image }}
+          publish-dockerhub: ${{ inputs.var-publish-dockerhub }}
+          dockerhub-image: ${{ inputs.var-dockerhub-image }}
+          publish-acr: ${{ inputs.var-publish-acr }}
+          acr-image: ${{ inputs.var-acr-image }}
+          publish-ecr: ${{ inputs.var-publish-ecr }}
+          ecr-image: ${{ inputs.var-ecr-image }}
+          aws-region: ${{ inputs.var-aws-region }}
+          publish-quay: ${{ inputs.var-publish-quay }}
+          quay-image: ${{ inputs.var-quay-image }}
+          publish-harbor: ${{ inputs.var-publish-harbor }}
+          harbor-image: ${{ inputs.var-harbor-image }}
+          harbor-registry-host: ${{ inputs.var-harbor-registry-host }}
+          publish-artifactory: ${{ inputs.var-publish-artifactory }}
+          artifactory-image: ${{ inputs.var-artifactory-image }}
+          artifactory-registry-host: ${{ inputs.var-artifactory-registry-host }}
+          publish-gitlab: ${{ inputs.var-publish-gitlab }}
+          gitlab-image: ${{ inputs.var-gitlab-image }}
+          gitlab-registry-host: ${{ inputs.var-gitlab-registry-host }}
+          publish-digitalocean: ${{ inputs.var-publish-digitalocean }}
+          digitalocean-image: ${{ inputs.var-digitalocean-image }}
+          publish-ocir: ${{ inputs.var-publish-ocir }}
+          ocir-image: ${{ inputs.var-ocir-image }}
+          ocir-registry-host: ${{ inputs.var-ocir-registry-host }}
+          publish-private: ${{ inputs.var-publish-private }}
+          private-image: ${{ inputs.var-private-image }}
+          private-registry-host: ${{ inputs.var-private-registry-host }}
+          config-registries-json: ${{ steps.load.outputs.registries_json }}
+
+      - id: effective
+        shell: bash
+        env:
+          IN_DOCKERFILE: ${{ inputs.dockerfile-path }}
+          CFG_DOCKERFILE: ${{ steps.load.outputs.dockerfile }}
+          IN_CONTEXT: ${{ inputs.build-context }}
+          CFG_CONTEXT: ${{ steps.load.outputs.build_context }}
+          IN_PLATFORMS: ${{ inputs.platforms }}
+          CFG_PLATFORMS: ${{ steps.load.outputs.platforms }}
+          IN_TEST: ${{ inputs.test-command }}
+          CFG_TEST: ${{ steps.load.outputs.test_command }}
+          IN_SEVERITY: ${{ inputs.scan-severity-threshold }}
+          CFG_SEVERITY: ${{ steps.load.outputs.scan_severity_threshold }}
+          CFG_RELEASE_TAG_STRATEGY: ${{ steps.load.outputs.release_tag_strategy }}
+          CFG_RELEASE_PREFIX: ${{ steps.load.outputs.release_prefix }}
+          CFG_RELEASE_INCREMENT_BASENAME: ${{ steps.load.outputs.release_increment_basename }}
+          CFG_RELEASE_SEMVER_INITIAL: ${{ steps.load.outputs.release_semver_initial }}
+          CFG_RELEASE_SEMVER_BUMP: ${{ steps.load.outputs.release_semver_bump }}
+          CFG_PUBLISH_UPSTREAM_TAG_ALIAS: ${{ steps.load.outputs.publish_upstream_tag_alias }}
+          CFG_SIGN_IMAGES: ${{ steps.load.outputs.sign_images }}
+          IN_ENV: ${{ inputs.environment }}
+          CFG_ENV: ${{ steps.load.outputs.environment }}
+          IN_REGISTRIES: ${{ inputs.target-registries }}
+          CFG_REGISTRIES: ${{ steps.registries.outputs.registries_json }}
+        run: |
+          set -euo pipefail
+          {
+            echo "dockerfile=${IN_DOCKERFILE:-$CFG_DOCKERFILE}"
+            echo "build_context=${IN_CONTEXT:-$CFG_CONTEXT}"
+            echo "platforms=${IN_PLATFORMS:-$CFG_PLATFORMS}"
+            echo "test_command=${IN_TEST:-$CFG_TEST}"
+            echo "scan_severity_threshold=${IN_SEVERITY:-$CFG_SEVERITY}"
+            echo "release_tag_strategy=$CFG_RELEASE_TAG_STRATEGY"
+            echo "release_prefix=$CFG_RELEASE_PREFIX"
+            echo "release_increment_basename=$CFG_RELEASE_INCREMENT_BASENAME"
+            echo "release_semver_initial=$CFG_RELEASE_SEMVER_INITIAL"
+            echo "release_semver_bump=$CFG_RELEASE_SEMVER_BUMP"
+            echo "publish_upstream_tag_alias=$CFG_PUBLISH_UPSTREAM_TAG_ALIAS"
+            echo "sign_images=$CFG_SIGN_IMAGES"
+            echo "environment=${IN_ENV:-$CFG_ENV}"
+            echo "target_registries=${IN_REGISTRIES:-$CFG_REGISTRIES}"
+          } >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------
+  # STAGE: Version Detection
+  # ---------------------------------------------------------------------
+  version:
+    name: Calculate Release Version
+    needs: config
+    if: ${{ needs.config.outputs.has_relevant_changes == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      base_image_version: ${{ steps.extract.outputs.base_image_version }}
+      new_git_tag: ${{ steps.calc.outputs.new_git_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: extract
+        uses: $/.github/actions/extract-base-image
+        with:
+          dockerfile-path: ${{ needs.config.outputs.dockerfile }}
+
+      - id: calc
+        uses: $/.github/actions/calculate-next-tag
+        with:
+          base-tag: ${{ steps.extract.outputs.base_image_version }}
+          strategy: ${{ needs.config.outputs.release_tag_strategy }}
+          release-prefix: ${{ needs.config.outputs.release_prefix }}
+          increment-basename: ${{ needs.config.outputs.release_increment_basename }}
+          semver-initial: ${{ needs.config.outputs.release_semver_initial }}
+          semver-bump: ${{ needs.config.outputs.release_semver_bump }}
+          image-digest: ${{ steps.extract.outputs.current_digest }}
+
+  # ---------------------------------------------------------------------
+  # STAGE: Build (multi-arch, cached)
+  # ---------------------------------------------------------------------
+  build:
+    name: Build Image
+    needs: [config, version]
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.dry-run }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image (local, for test + scan)
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ needs.config.outputs.build_context }}
+          file: ${{ needs.config.outputs.dockerfile }}
+          platforms: ${{ needs.config.outputs.platforms }}
+          push: false
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            candidate-image:${{ needs.version.outputs.new_git_tag }}
+            candidate-image:test
+          build-args: |
+            GIT_TAG=${{ needs.version.outputs.new_git_tag }}
+            GIT_COMMIT=${{ github.sha }}
+            ${{ inputs.build-args }}
+          outputs: type=docker,dest=/tmp/candidate-image.tar
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-image
+          path: /tmp/candidate-image.tar
+          retention-days: 1
+
+  # ---------------------------------------------------------------------
+  # STAGE: Test
+  # ---------------------------------------------------------------------
+  test:
+    name: Container Smoke Test
+    needs: [config, version, build]
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.dry-run && needs.config.outputs.test_command != '' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-image
+          path: /tmp
+
+      - name: Load image
+        run: docker load -i /tmp/candidate-image.tar
+
+      - name: Run smoke test
+        run: ${{ needs.config.outputs.test_command }}
+
+  # ---------------------------------------------------------------------
+  # STAGE: Scan (Dockerfile lint + vulnerability scan + SBOM)
+  # ---------------------------------------------------------------------
+  scan:
+    name: Lint, Scan and Generate SBOM
+    needs: [config, version, build]
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.dry-run }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ needs.config.outputs.dockerfile }}
+          failure-threshold: warning
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-image
+          path: /tmp
+
+      - name: Load image
+        run: docker load -i /tmp/candidate-image.tar
+
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          input: /tmp/candidate-image.tar
+          severity: ${{ needs.config.outputs.scan_severity_threshold }}
+          exit-code: '1'
+          format: 'table'
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: candidate-image:${{ needs.version.outputs.new_git_tag }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+          retention-days: 90
+
+  # ---------------------------------------------------------------------
+  # STAGE: Release (tag, changelog, GitHub Release)
+  #
+  # An immutable Git tag and GitHub Release are created only after the image
+  # has been successfully published. This prevents a release record from
+  # claiming an artifact that failed to reach its registry.
+  # ---------------------------------------------------------------------
+  release:
+    name: Tag and Release
+    needs: [config, version, scan, publish]
+    if: ${{ !inputs.dry-run && !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    outputs:
+      release_url: ${{ steps.generate-release.outputs.release_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: /tmp/release-sbom
+
+      - id: generate-release
+        uses: $/.github/actions/generate-release
+        with:
+          new-tag: ${{ needs.version.outputs.new_git_tag }}
+          base-version: ${{ needs.version.outputs.base_image_version }}
+          published-image-reference: ${{ fromJSON(needs.config.outputs.target_registries)[0].image }}:${{ needs.version.outputs.new_git_tag }}
+          sbom-path: /tmp/release-sbom/sbom.spdx.json
+
+  # ---------------------------------------------------------------------
+  # STAGE: Publish (environment-gated, multi-registry)
+  # ---------------------------------------------------------------------
+  publish:
+    name: Publish to Registries
+    needs: [config, version, test, scan]
+    if: ${{ !inputs.dry-run && !cancelled() && !failure() }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.config.outputs.environment }}
+    strategy:
+      matrix:
+        target: ${{ fromJSON(needs.config.outputs.target_registries) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Resolve registry credentials
+        id: creds
+        shell: bash
+        env:
+          REG_TYPE: ${{ matrix.target.type }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+          HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
+          GITLAB_USERNAME: ${{ secrets.GITLAB_USERNAME }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          OCIR_USERNAME: ${{ secrets.OCIR_USERNAME }}
+          OCIR_TOKEN: ${{ secrets.OCIR_TOKEN }}
+          PRIVATE_REGISTRY_USERNAME: ${{ secrets.PRIVATE_REGISTRY_USERNAME }}
+          PRIVATE_REGISTRY_PASSWORD: ${{ secrets.PRIVATE_REGISTRY_PASSWORD }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN_VALUE: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$REG_TYPE" in
+            dockerhub)   USERNAME="$DOCKERHUB_USERNAME"; PASSWORD="$DOCKERHUB_TOKEN" ;;
+            acr)         USERNAME="$ACR_USERNAME"; PASSWORD="$ACR_PASSWORD" ;;
+            quay)        USERNAME="$QUAY_USERNAME"; PASSWORD="$QUAY_TOKEN" ;;
+            harbor)      USERNAME="$HARBOR_USERNAME"; PASSWORD="$HARBOR_PASSWORD" ;;
+            artifactory) USERNAME="$ARTIFACTORY_USERNAME"; PASSWORD="$ARTIFACTORY_TOKEN" ;;
+            gitlab)      USERNAME="$GITLAB_USERNAME"; PASSWORD="$GITLAB_TOKEN" ;;
+            digitalocean) USERNAME="$DIGITALOCEAN_TOKEN"; PASSWORD="$DIGITALOCEAN_TOKEN" ;;
+            ocir)        USERNAME="$OCIR_USERNAME"; PASSWORD="$OCIR_TOKEN" ;;
+            private)     USERNAME="$PRIVATE_REGISTRY_USERNAME"; PASSWORD="$PRIVATE_REGISTRY_PASSWORD" ;;
+            ghcr|ecr|*)  USERNAME="$GITHUB_ACTOR"; PASSWORD="$GITHUB_TOKEN_VALUE" ;;
+          esac
+          {
+            echo "username=$USERNAME"
+            echo "::add-mask::$PASSWORD"
+            echo "password=$PASSWORD"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to registry
+        uses: $/.github/actions/registry-login
+        with:
+          registry-type: ${{ matrix.target.type }}
+          registry: ${{ matrix.target.registry || '' }}
+          username: ${{ steps.creds.outputs.username }}
+          password: ${{ steps.creds.outputs.password }}
+          aws-region: ${{ matrix.target.region || '' }}
+          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+
+      - name: Build and push
+        id: build-and-push
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ needs.config.outputs.build_context }}
+          file: ${{ needs.config.outputs.dockerfile }}
+          platforms: ${{ needs.config.outputs.platforms }}
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          attests: |
+            type=sbom
+            type=provenance
+          tags: |
+            ${{ matrix.target.image }}:${{ needs.version.outputs.new_git_tag }}
+            ${{ needs.config.outputs.publish_upstream_tag_alias == 'true' && format('{0}:{1}', matrix.target.image, needs.version.outputs.base_image_version) || '' }}
+          build-args: |
+            GIT_TAG=${{ needs.version.outputs.new_git_tag }}
+            GIT_COMMIT=${{ github.sha }}
+            ${{ inputs.build-args }}
+
+      - name: Install Cosign
+        if: ${{ needs.config.outputs.sign_images == 'true' }}
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Keylessly sign published image
+        if: ${{ needs.config.outputs.sign_images == 'true' }}
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.target.image }}
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [ -n "$DIGEST" ] || {
+            echo "::error::Buildx did not return the published image digest; refusing to sign a tag."
+            exit 1
+          }
+          cosign sign --yes "${IMAGE}@${DIGEST}"

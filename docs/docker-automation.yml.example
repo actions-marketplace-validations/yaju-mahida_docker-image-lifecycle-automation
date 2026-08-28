@@ -1,0 +1,108 @@
+# Sample docker-automation.yml — OPTIONAL, ADVANCED ESCAPE HATCH
+#
+# Repository Variables (Settings > Actions > Variables) are now the
+# recommended primary configuration surface for this platform - see
+# "Repository Variables Catalog" in docs/REUSABLE_AUTOMATION.md. Most
+# repositories need NO config file at all.
+#
+# This file is loaded LAST and only fills in whatever a Repository
+# Variable did not already supply (precedence: workflow_call `with:` input
+# > Repository Variable > this file > hardcoded default). Copy it into a
+# consumer repository as .github/docker-automation.yml ONLY if you need:
+#   - Multiple instances of the same registry type (e.g. two ACR
+#     registries, region-sharded ECR) - a scalar PUBLISH_<TYPE>/<TYPE>_IMAGE
+#     variable pair can only express one instance per type.
+#   - A registry type/host combination not worth promoting to its own
+#     named Repository Variable pair.
+#   - Any other setting you'd rather track in reviewable, commented YAML
+#     than in the repository Settings UI.
+#
+# Every field is optional - anything omitted falls back to its Repository
+# Variable (if set) or documented default (see
+# .github/actions/load-automation-config/action.yml). Note that the
+# monitoring schedule (cron/day/time/timezone) is NEVER configured here -
+# it lives in the consumer's own workflow file - see
+# docs/consumer-workflow-example.yml.
+
+monitor:
+  enabled: true
+  update_strategy: patch      # patch | minor | major
+  # Which signals may raise an update:
+  #   DIGEST_AND_VERSION (default) | DIGEST_ONLY | VERSION_ONLY
+  #   | STRICT_SEMVER | ALWAYS_UPDATE
+  # DIGEST_AND_VERSION also detects same-tag rebuilds, which tag
+  # comparison alone cannot see.
+  update_policy: DIGEST_AND_VERSION
+  auto_create_pr: true
+  auto_merge: false            # requires "Allow auto-merge" repo setting
+  reviewers:
+    - platform-team
+  assignees:
+    - application-owner
+
+release:
+  branches:
+    - main
+  paths_ignore:
+    - '*.md'
+    - 'docs/*'
+  dockerfile: Dockerfile
+  build_context: .
+  platforms: linux/amd64,linux/arm64
+  test_command: 'docker run --rm candidate-image:test true'
+  environment: production
+  scan_severity_threshold: 'CRITICAL,HIGH'
+  # Immutable Git and OCI release identifiers. BASE_TAG_INCREMENT is the
+  # secure default because the same upstream tag may be rebuilt with a new
+  # digest.
+  tag_strategy: BASE_TAG_INCREMENT
+  prefix: your-image                 # used by PREFIX_INCREMENT/DATE_INCREMENT
+  increment_basename: release        # used by RELEASE_INCREMENT
+  semver_initial: v1.0.0             # used by SEMVER_INCREMENT
+  semver_bump: patch                 # patch | minor | major
+  # The original upstream tag is a mutable OCI alias. It is never published
+  # unless explicitly enabled.
+  publish_upstream_tag_alias: false
+  # Sign each published image digest with keyless Cosign and GitHub OIDC.
+  sign_images: false
+
+  # The one setting that most benefits from staying in this file: an
+  # arbitrary-cardinality registries array. Supported `type` values: ghcr,
+  # dockerhub, acr, ecr, quay, harbor, artifactory, gitlab, digitalocean,
+  # ocir, private. Any entry whose `type` ALSO has a PUBLISH_<TYPE>=true
+  # Repository Variable is skipped here in favour of the variable-driven
+  # entry, so you can migrate entries to variables one at a time.
+  registries:
+    - type: ghcr
+      image: 'ghcr.io/your-org/your-image'
+    - type: dockerhub
+      image: '${DOCKER_HUB_REGISTRY}/${IMAGE_NAME}'
+    - type: acr
+      image: 'myregistry.azurecr.io/your-image'
+    # Second ACR instance in another region/subscription - this is the
+    # kind of case a single ACR_IMAGE Repository Variable cannot express.
+    - type: acr
+      registry: 'myregistry-eu.azurecr.io'
+      image: 'myregistry-eu.azurecr.io/your-image'
+    - type: ecr
+      image: '123456789012.dkr.ecr.us-east-1.amazonaws.com/your-image'
+      region: 'us-east-1'
+    - type: quay
+      image: 'quay.io/your-org/your-image'
+    - type: harbor
+      registry: 'harbor.example.com'
+      image: 'harbor.example.com/project/your-image'
+    - type: artifactory
+      registry: 'yourco.jfrog.io'
+      image: 'yourco.jfrog.io/docker-local/your-image'
+    - type: gitlab
+      registry: 'registry.gitlab.com'
+      image: 'registry.gitlab.com/your-group/your-project'
+    - type: digitalocean
+      image: 'registry.digitalocean.com/your-registry/your-image'
+    - type: ocir
+      registry: 'iad.ocir.io'
+      image: 'iad.ocir.io/your-tenancy/your-image'
+    - type: private
+      registry: 'registry.example.com'
+      image: 'registry.example.com/your-image'

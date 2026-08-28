@@ -1,0 +1,179 @@
+name: 'Extract Base Image'
+description: >
+  Parses a Dockerfile's base image FROM instruction into its component parts
+  (registry, repository, tag, digest). Supports all four OCI reference shapes
+  - image, image:tag, image@digest and image:tag@digest - so digest-pinned
+  base images are a first-class supported case rather than an error.
+
+inputs:
+  dockerfile-path:
+    description: 'Path to the Dockerfile to inspect'
+    required: false
+    default: 'Dockerfile'
+  stage-index:
+    description: >
+      Which FROM instruction to treat as the monitored base image, 1-based.
+      Defaults to the first FROM. For multi-stage builds where the runtime
+      base is a later stage, set this accordingly.
+    required: false
+    default: '1'
+
+outputs:
+  image_reference:
+    description: 'Full image reference exactly as written in the Dockerfile'
+    value: ${{ steps.extract.outputs.image_reference }}
+  image_name:
+    description: 'Image name without tag or digest (e.g. docker.io/wordpress)'
+    value: ${{ steps.extract.outputs.image_name }}
+  registry:
+    description: 'Registry host (e.g. docker.io, ghcr.io, myreg.azurecr.io)'
+    value: ${{ steps.extract.outputs.registry }}
+  repository:
+    description: 'Registry API repository path (e.g. library/wordpress)'
+    value: ${{ steps.extract.outputs.repository }}
+  base_image_version:
+    description: 'The tag currently pinned in the Dockerfile (may be empty for bare digest pins)'
+    value: ${{ steps.extract.outputs.base_image_version }}
+  current_digest:
+    description: 'The digest currently pinned in the Dockerfile, empty when not digest-pinned'
+    value: ${{ steps.extract.outputs.current_digest }}
+  is_digest_pinned:
+    description: '"true" when the Dockerfile already pins a digest'
+    value: ${{ steps.extract.outputs.is_digest_pinned }}
+  from_line_number:
+    description: 'Line number of the parsed FROM instruction, for in-place rewriting'
+    value: ${{ steps.extract.outputs.from_line_number }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: extract
+      shell: bash
+      env:
+        DOCKERFILE: ${{ inputs.dockerfile-path }}
+        STAGE_INDEX: ${{ inputs.stage-index }}
+      run: |
+        set -euo pipefail
+
+        if [ ! -f "$DOCKERFILE" ]; then
+          echo "::error::Dockerfile not found at '$DOCKERFILE'."
+          exit 1
+        fi
+
+        # Select the Nth FROM instruction (1-based), capturing its line number
+        # so the monitor can rewrite exactly that line later.
+        FROM_MATCH="$(
+          grep -inE '^[[:space:]]*FROM[[:space:]]+' "$DOCKERFILE" \
+          | sed -n "${STAGE_INDEX}p" || true
+        )"
+        if [ -z "$FROM_MATCH" ]; then
+          echo "::error::No FROM instruction #${STAGE_INDEX} found in $DOCKERFILE."
+          exit 1
+        fi
+
+        FROM_LINE_NUMBER="${FROM_MATCH%%:*}"
+        FROM_LINE="${FROM_MATCH#*:}"
+        echo "FROM instruction (line $FROM_LINE_NUMBER): $FROM_LINE"
+
+        # Skip flags (--platform=...) and stop at the AS alias.
+        IMAGE_REF="$(
+          echo "$FROM_LINE" | awk '
+            {
+              for (i = 2; i <= NF; i++) {
+                if (toupper($i) == "AS") { break }
+                if ($i !~ /^--/) { print $i; exit }
+              }
+            }
+          '
+        )"
+
+        if [ -z "$IMAGE_REF" ]; then
+          echo "::error::Could not parse image reference from FROM line: $FROM_LINE"
+          exit 1
+        fi
+
+        case "$IMAGE_REF" in
+          '$'*|*'${'*)
+            echo "::error::Base image reference '$IMAGE_REF' is build-arg driven; monitoring requires a literal reference."
+            exit 1
+            ;;
+        esac
+
+        # ---- Split off the digest (everything after '@') ----
+        CURRENT_DIGEST=""
+        NAME_AND_TAG="$IMAGE_REF"
+        case "$IMAGE_REF" in
+          *@*)
+            CURRENT_DIGEST="${IMAGE_REF##*@}"
+            NAME_AND_TAG="${IMAGE_REF%@*}"
+            ;;
+        esac
+
+        # ---- Split off the tag (last ':' in the final path segment) ----
+        LAST_SEGMENT="${NAME_AND_TAG##*/}"
+        BASE_IMAGE_VERSION=""
+        IMAGE_NAME="$NAME_AND_TAG"
+        if [ "$LAST_SEGMENT" != "${LAST_SEGMENT%:*}" ]; then
+          BASE_IMAGE_VERSION="${LAST_SEGMENT##*:}"
+          IMAGE_NAME="${NAME_AND_TAG%:*}"
+        fi
+
+        if [ -z "$BASE_IMAGE_VERSION" ] && [ -z "$CURRENT_DIGEST" ]; then
+          # Bare "image" with no tag - Docker's implicit default.
+          BASE_IMAGE_VERSION="latest"
+        fi
+
+        # ---- Split registry host from repository path ----
+        # A leading segment is a registry only if it looks like a host:
+        # contains a dot, contains a port, or is exactly "localhost".
+        FIRST_SEGMENT="${IMAGE_NAME%%/*}"
+        REGISTRY="docker.io"
+        REPOSITORY="$IMAGE_NAME"
+        if [ "$FIRST_SEGMENT" != "$IMAGE_NAME" ]; then
+          case "$FIRST_SEGMENT" in
+            *.*|*:*|localhost)
+              REGISTRY="$FIRST_SEGMENT"
+              REPOSITORY="${IMAGE_NAME#*/}"
+              ;;
+          esac
+        fi
+
+        # Normalise Docker Hub aliases and apply its implicit library/ prefix.
+        case "$REGISTRY" in
+          docker.io|index.docker.io|registry-1.docker.io)
+            REGISTRY="docker.io"
+            case "$REPOSITORY" in
+              */*) ;;
+              *) REPOSITORY="library/$REPOSITORY" ;;
+            esac
+            ;;
+        esac
+
+        IS_DIGEST_PINNED=false
+        if [ -n "$CURRENT_DIGEST" ]; then
+          if ! printf '%s' "$CURRENT_DIGEST" | grep -qE '^sha[0-9]+:[0-9a-f]+$'; then
+            echo "::error::Malformed digest in FROM instruction: '$CURRENT_DIGEST'."
+            exit 1
+          fi
+          IS_DIGEST_PINNED=true
+        fi
+
+        if [ -z "$BASE_IMAGE_VERSION" ]; then
+          echo "::warning::Base image is pinned by digest only, with no tag. Upstream version tracking is unavailable; digest comparison has no tag to resolve against. Prefer the 'image:tag@digest' form."
+        fi
+
+        echo "Registry:   $REGISTRY"
+        echo "Repository: $REPOSITORY"
+        echo "Tag:        ${BASE_IMAGE_VERSION:-<none>}"
+        echo "Digest:     ${CURRENT_DIGEST:-<not pinned>}"
+
+        {
+          echo "image_reference=$IMAGE_REF"
+          echo "image_name=$IMAGE_NAME"
+          echo "registry=$REGISTRY"
+          echo "repository=$REPOSITORY"
+          echo "base_image_version=$BASE_IMAGE_VERSION"
+          echo "current_digest=$CURRENT_DIGEST"
+          echo "is_digest_pinned=$IS_DIGEST_PINNED"
+          echo "from_line_number=$FROM_LINE_NUMBER"
+        } >> "$GITHUB_OUTPUT"

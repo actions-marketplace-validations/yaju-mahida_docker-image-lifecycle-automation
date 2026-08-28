@@ -1,0 +1,228 @@
+name: 'Resolve Registry Targets'
+description: >
+  Builds the normalized `target_registries` JSON array consumed by the
+  publish job's matrix. Merges two sources, in this precedence order:
+    1. Repository-Variable-driven scalar registries (PUBLISH_<TYPE>,
+       <TYPE>_IMAGE, <TYPE>_REGISTRY_HOST) - the recommended path for the
+       common "one instance per registry type" case, requiring only
+       Repository Variables and no config file.
+    2. The config file's `release.registries` array (config-registries-json
+       input) - the escape hatch for anything a scalar variable cannot
+       express: multiple instances of the same registry type (e.g. two ACR
+       instances), region-sharded ECR, or custom per-entry auth wiring.
+  Entries are de-duplicated by type; a config-file entry for a type that
+  also has PUBLISH_<TYPE>=true is skipped in favour of the variable-driven
+  entry, so a consumer can start in the config file and migrate to
+  variables without producing duplicate publish targets.
+
+inputs:
+  publish-ghcr:
+    required: false
+    default: ''
+  ghcr-image:
+    required: false
+    default: ''
+  publish-dockerhub:
+    required: false
+    default: ''
+  dockerhub-image:
+    required: false
+    default: ''
+  publish-acr:
+    required: false
+    default: ''
+  acr-image:
+    required: false
+    default: ''
+  publish-ecr:
+    required: false
+    default: ''
+  ecr-image:
+    required: false
+    default: ''
+  aws-region:
+    required: false
+    default: ''
+  publish-quay:
+    required: false
+    default: ''
+  quay-image:
+    required: false
+    default: ''
+  publish-harbor:
+    required: false
+    default: ''
+  harbor-image:
+    required: false
+    default: ''
+  harbor-registry-host:
+    required: false
+    default: ''
+  publish-artifactory:
+    required: false
+    default: ''
+  artifactory-image:
+    required: false
+    default: ''
+  artifactory-registry-host:
+    required: false
+    default: ''
+  publish-gitlab:
+    required: false
+    default: ''
+  gitlab-image:
+    required: false
+    default: ''
+  gitlab-registry-host:
+    required: false
+    default: ''
+  publish-digitalocean:
+    required: false
+    default: ''
+  digitalocean-image:
+    required: false
+    default: ''
+  publish-ocir:
+    required: false
+    default: ''
+  ocir-image:
+    required: false
+    default: ''
+  ocir-registry-host:
+    required: false
+    default: ''
+  publish-private:
+    required: false
+    default: ''
+  private-image:
+    required: false
+    default: ''
+  private-registry-host:
+    required: false
+    default: ''
+  image-name:
+    description: >
+      Default image path/name applied to any PUBLISH_<TYPE>=true registry
+      whose <TYPE>_IMAGE variable was left empty (e.g. rely on this single
+      shared IMAGE_NAME everywhere rather than repeating it per registry).
+    required: false
+    default: ''
+  config-registries-json:
+    description: 'release.registries array from load-automation-config, already ${VAR}-expanded'
+    required: false
+    default: '[]'
+
+outputs:
+  registries_json:
+    description: 'Normalized JSON array: [{type, image, registry, region}, ...]'
+    value: ${{ steps.resolve.outputs.registries_json }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        PUBLISH_GHCR: ${{ inputs.publish-ghcr }}
+        GHCR_IMAGE: ${{ inputs.ghcr-image }}
+        PUBLISH_DOCKERHUB: ${{ inputs.publish-dockerhub }}
+        DOCKERHUB_IMAGE: ${{ inputs.dockerhub-image }}
+        PUBLISH_ACR: ${{ inputs.publish-acr }}
+        ACR_IMAGE: ${{ inputs.acr-image }}
+        PUBLISH_ECR: ${{ inputs.publish-ecr }}
+        ECR_IMAGE: ${{ inputs.ecr-image }}
+        AWS_REGION: ${{ inputs.aws-region }}
+        PUBLISH_QUAY: ${{ inputs.publish-quay }}
+        QUAY_IMAGE: ${{ inputs.quay-image }}
+        PUBLISH_HARBOR: ${{ inputs.publish-harbor }}
+        HARBOR_IMAGE: ${{ inputs.harbor-image }}
+        HARBOR_REGISTRY_HOST: ${{ inputs.harbor-registry-host }}
+        PUBLISH_ARTIFACTORY: ${{ inputs.publish-artifactory }}
+        ARTIFACTORY_IMAGE: ${{ inputs.artifactory-image }}
+        ARTIFACTORY_REGISTRY_HOST: ${{ inputs.artifactory-registry-host }}
+        PUBLISH_GITLAB: ${{ inputs.publish-gitlab }}
+        GITLAB_IMAGE: ${{ inputs.gitlab-image }}
+        GITLAB_REGISTRY_HOST: ${{ inputs.gitlab-registry-host }}
+        PUBLISH_DIGITALOCEAN: ${{ inputs.publish-digitalocean }}
+        DIGITALOCEAN_IMAGE: ${{ inputs.digitalocean-image }}
+        PUBLISH_OCIR: ${{ inputs.publish-ocir }}
+        OCIR_IMAGE: ${{ inputs.ocir-image }}
+        OCIR_REGISTRY_HOST: ${{ inputs.ocir-registry-host }}
+        PUBLISH_PRIVATE: ${{ inputs.publish-private }}
+        PRIVATE_IMAGE: ${{ inputs.private-image }}
+        PRIVATE_REGISTRY_HOST: ${{ inputs.private-registry-host }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        CONFIG_REGISTRIES_JSON: ${{ inputs.config-registries-json }}
+      run: |
+        set -euo pipefail
+        python3 - <<'PYEOF'
+        import json
+        import os
+
+        def truthy(value):
+            return str(value or "").strip().lower() in ("true", "1", "yes", "on")
+
+        env = os.environ.get
+
+        # type -> (publish flag env, image env, host env or None, extra dict)
+        scalar_types = [
+            ("ghcr", "PUBLISH_GHCR", "GHCR_IMAGE", None, {}),
+            ("dockerhub", "PUBLISH_DOCKERHUB", "DOCKERHUB_IMAGE", None, {}),
+            ("acr", "PUBLISH_ACR", "ACR_IMAGE", None, {}),
+            ("ecr", "PUBLISH_ECR", "ECR_IMAGE", None, {"region": env("AWS_REGION", "")}),
+            ("quay", "PUBLISH_QUAY", "QUAY_IMAGE", None, {}),
+            ("harbor", "PUBLISH_HARBOR", "HARBOR_IMAGE", "HARBOR_REGISTRY_HOST", {}),
+            ("artifactory", "PUBLISH_ARTIFACTORY", "ARTIFACTORY_IMAGE", "ARTIFACTORY_REGISTRY_HOST", {}),
+            ("gitlab", "PUBLISH_GITLAB", "GITLAB_IMAGE", "GITLAB_REGISTRY_HOST", {}),
+            ("digitalocean", "PUBLISH_DIGITALOCEAN", "DIGITALOCEAN_IMAGE", None, {}),
+            ("ocir", "PUBLISH_OCIR", "OCIR_IMAGE", "OCIR_REGISTRY_HOST", {}),
+            ("private", "PUBLISH_PRIVATE", "PRIVATE_IMAGE", "PRIVATE_REGISTRY_HOST", {}),
+        ]
+
+        image_name_default = env("IMAGE_NAME", "")
+        resolved = []
+        resolved_types = set()
+
+        for reg_type, publish_env, image_env, host_env, extra in scalar_types:
+            if not truthy(env(publish_env)):
+                continue
+            image = env(image_env) or image_name_default
+            if not image:
+                print(f"::warning::PUBLISH_{reg_type.upper()}=true but no image was configured "
+                      f"({image_env} or IMAGE_NAME); skipping this registry target.")
+                continue
+            entry = {"type": reg_type, "image": image}
+            if host_env:
+                entry["registry"] = env(host_env, "")
+            entry.update(extra)
+            resolved.append(entry)
+            resolved_types.add(reg_type)
+
+        try:
+            config_registries = json.loads(env("CONFIG_REGISTRIES_JSON") or "[]")
+        except json.JSONDecodeError:
+            config_registries = []
+
+        for entry in config_registries:
+            reg_type = entry.get("type")
+            if reg_type in resolved_types:
+                # Variable-driven entry for this type already wins.
+                continue
+            resolved.append(entry)
+            resolved_types.add(reg_type)
+
+        github_output = os.environ["GITHUB_OUTPUT"]
+        with open(github_output, "a", encoding="utf-8") as out:
+            out.write(f"registries_json={json.dumps(resolved)}\n")
+
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_path:
+            with open(summary_path, "a", encoding="utf-8") as summary:
+                summary.write("### Resolved Publish Targets\n\n")
+                if resolved:
+                    summary.write("| Type | Image | Registry |\n|---|---|---|\n")
+                    for entry in resolved:
+                        summary.write(f"| {entry.get('type')} | {entry.get('image')} | {entry.get('registry', '')} |\n")
+                else:
+                    summary.write("_No publish targets resolved._\n")
+        PYEOF

@@ -1,0 +1,355 @@
+name: 'Load Docker Automation Config'
+description: >
+  Loads and validates .github/docker-automation.yml, applies documented
+  defaults for any missing fields (so the file is entirely optional for
+  zero-config open-source adoption), expands ${VAR}-style references against
+  job environment variables, and exposes every setting as a step output for
+  consumption by the reusable workflows.
+
+inputs:
+  config-path:
+    description: 'Path to the automation config file'
+    required: false
+    default: '.github/docker-automation.yml'
+  env-overrides:
+    description: >
+      Newline-separated KEY=VALUE pairs exported before ${VAR} expansion.
+      Reusable workflows do not automatically inherit the caller's `vars`/
+      `secrets` context, so callers that reference ${VAR} placeholders in
+      their docker-automation.yml (e.g. registry namespaces) must forward
+      those values here explicitly.
+    required: false
+    default: ''
+  # ---------------------------------------------------------------------
+  # Repository-Variable overrides. Reusable workflows cannot read the
+  # caller's `vars` context directly (there is no `vars: inherit`), so the
+  # caller's thin workflow forwards each Repository Variable explicitly as
+  # a `with:` input, which the reusable workflow then passes straight
+  # through here. Precedence resolved by this action: var-* input (if
+  # non-empty) > config file value > hardcoded default. This makes
+  # Repository Variables the primary, zero-YAML configuration surface
+  # while the config file remains a fully optional escape hatch.
+  # ---------------------------------------------------------------------
+  var-monitor-enabled:
+    description: 'Repository Variable override: DOCKER_MONITOR_ENABLED / BASE_IMAGE_MONITOR_ENABLED'
+    required: false
+    default: ''
+  var-update-strategy:
+    description: 'Repository Variable override: DOCKER_UPDATE_STRATEGY / BASE_IMAGE_UPDATE_STRATEGY'
+    required: false
+    default: ''
+  var-update-policy:
+    description: >
+      Repository Variable override: BASE_IMAGE_UPDATE_POLICY. One of
+      DIGEST_AND_VERSION (default), DIGEST_ONLY, VERSION_ONLY,
+      STRICT_SEMVER, ALWAYS_UPDATE.
+    required: false
+    default: ''
+  var-auto-create-pr:
+    description: 'Repository Variable override: DOCKER_AUTO_CREATE_PR / AUTO_CREATE_UPDATE_PR'
+    required: false
+    default: ''
+  var-auto-merge:
+    description: 'Repository Variable override: DOCKER_AUTO_MERGE / AUTO_MERGE_UPDATE_PR'
+    required: false
+    default: ''
+  var-reviewers:
+    description: 'Repository Variable override: PR_REVIEWERS / REPOSITORY_REVIEWERS (comma-separated)'
+    required: false
+    default: ''
+  var-assignees:
+    description: 'Repository Variable override: PR_ASSIGNEES / REPOSITORY_ASSIGNEES (comma-separated)'
+    required: false
+    default: ''
+  var-release-branches:
+    description: 'Repository Variable override: RELEASE_BRANCHES (comma-separated)'
+    required: false
+    default: ''
+  var-paths-ignore:
+    description: 'Repository Variable override: PATHS_IGNORE, as a JSON array string, e.g. ["**/*.md","docs/**"]'
+    required: false
+    default: ''
+  var-dockerfile:
+    description: 'Repository Variable override: DOCKERFILE_PATH'
+    required: false
+    default: ''
+  var-build-context:
+    description: 'Repository Variable override: BUILD_CONTEXT'
+    required: false
+    default: ''
+  var-platforms:
+    description: 'Repository Variable override: BUILD_PLATFORMS'
+    required: false
+    default: ''
+  var-test-command:
+    description: 'Repository Variable override: TEST_COMMAND'
+    required: false
+    default: ''
+  var-environment:
+    description: 'Repository Variable override: DEPLOYMENT_ENVIRONMENT'
+    required: false
+    default: ''
+  var-scan-severity-threshold:
+    description: 'Repository Variable override: SCAN_SEVERITY_THRESHOLD'
+    required: false
+    default: ''
+  var-release-tag-strategy:
+    description: 'Repository Variable override: RELEASE_TAG_STRATEGY'
+    required: false
+    default: ''
+  var-release-prefix:
+    description: 'Repository Variable override: RELEASE_PREFIX'
+    required: false
+    default: ''
+  var-release-increment-basename:
+    description: 'Repository Variable override: RELEASE_INCREMENT_BASENAME'
+    required: false
+    default: ''
+  var-release-semver-initial:
+    description: 'Repository Variable override: RELEASE_SEMVER_INITIAL'
+    required: false
+    default: ''
+  var-release-semver-bump:
+    description: 'Repository Variable override: RELEASE_SEMVER_BUMP'
+    required: false
+    default: ''
+  var-publish-upstream-tag-alias:
+    description: 'Repository Variable override: PUBLISH_UPSTREAM_TAG_ALIAS'
+    required: false
+    default: ''
+  var-sign-images:
+    description: 'Repository Variable override: SIGN_IMAGES'
+    required: false
+    default: ''
+
+outputs:
+  monitor_enabled:
+    description: '"true"/"false" - master switch for the monitor workflow'
+    value: ${{ steps.load.outputs.monitor_enabled }}
+  update_strategy:
+    value: ${{ steps.load.outputs.update_strategy }}
+  update_policy:
+    description: >
+      Which signals decide that a base image changed: DIGEST_AND_VERSION,
+      DIGEST_ONLY, VERSION_ONLY, STRICT_SEMVER or ALWAYS_UPDATE.
+    value: ${{ steps.load.outputs.update_policy }}
+  auto_create_pr:
+    value: ${{ steps.load.outputs.auto_create_pr }}
+  auto_merge:
+    value: ${{ steps.load.outputs.auto_merge }}
+  reviewers:
+    description: 'Comma-separated reviewer usernames/teams'
+    value: ${{ steps.load.outputs.reviewers }}
+  assignees:
+    description: 'Comma-separated assignee usernames'
+    value: ${{ steps.load.outputs.assignees }}
+  release_branches:
+    description: 'Comma-separated release branch names (informational)'
+    value: ${{ steps.load.outputs.release_branches }}
+  paths_ignore:
+    description: 'Newline-separated glob patterns, for use with check-paths-changed'
+    value: ${{ steps.load.outputs.paths_ignore }}
+  dockerfile:
+    value: ${{ steps.load.outputs.dockerfile }}
+  build_context:
+    value: ${{ steps.load.outputs.build_context }}
+  platforms:
+    value: ${{ steps.load.outputs.platforms }}
+  test_command:
+    value: ${{ steps.load.outputs.test_command }}
+  environment:
+    value: ${{ steps.load.outputs.environment }}
+  scan_severity_threshold:
+    value: ${{ steps.load.outputs.scan_severity_threshold }}
+  release_tag_strategy:
+    description: 'Release identifier strategy'
+    value: ${{ steps.load.outputs.release_tag_strategy }}
+  release_prefix:
+    value: ${{ steps.load.outputs.release_prefix }}
+  release_increment_basename:
+    value: ${{ steps.load.outputs.release_increment_basename }}
+  release_semver_initial:
+    value: ${{ steps.load.outputs.release_semver_initial }}
+  release_semver_bump:
+    value: ${{ steps.load.outputs.release_semver_bump }}
+  publish_upstream_tag_alias:
+    description: '"true"/"false" - whether to publish the source tag as a mutable OCI alias'
+    value: ${{ steps.load.outputs.publish_upstream_tag_alias }}
+  sign_images:
+    description: '"true"/"false" - whether to keylessly sign published image digests'
+    value: ${{ steps.load.outputs.sign_images }}
+  registries_json:
+    description: 'JSON array of registry targets, with ${VAR} references expanded'
+    value: ${{ steps.load.outputs.registries_json }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: load
+      shell: bash
+      env:
+        CONFIG_PATH: ${{ inputs.config-path }}
+        ENV_OVERRIDES: ${{ inputs.env-overrides }}
+        VAR_MONITOR_ENABLED: ${{ inputs.var-monitor-enabled }}
+        VAR_UPDATE_STRATEGY: ${{ inputs.var-update-strategy }}
+        VAR_UPDATE_POLICY: ${{ inputs.var-update-policy }}
+        VAR_AUTO_CREATE_PR: ${{ inputs.var-auto-create-pr }}
+        VAR_AUTO_MERGE: ${{ inputs.var-auto-merge }}
+        VAR_REVIEWERS: ${{ inputs.var-reviewers }}
+        VAR_ASSIGNEES: ${{ inputs.var-assignees }}
+        VAR_RELEASE_BRANCHES: ${{ inputs.var-release-branches }}
+        VAR_PATHS_IGNORE: ${{ inputs.var-paths-ignore }}
+        VAR_DOCKERFILE: ${{ inputs.var-dockerfile }}
+        VAR_BUILD_CONTEXT: ${{ inputs.var-build-context }}
+        VAR_PLATFORMS: ${{ inputs.var-platforms }}
+        VAR_TEST_COMMAND: ${{ inputs.var-test-command }}
+        VAR_ENVIRONMENT: ${{ inputs.var-environment }}
+        VAR_SCAN_SEVERITY_THRESHOLD: ${{ inputs.var-scan-severity-threshold }}
+        VAR_RELEASE_TAG_STRATEGY: ${{ inputs.var-release-tag-strategy }}
+        VAR_RELEASE_PREFIX: ${{ inputs.var-release-prefix }}
+        VAR_RELEASE_INCREMENT_BASENAME: ${{ inputs.var-release-increment-basename }}
+        VAR_RELEASE_SEMVER_INITIAL: ${{ inputs.var-release-semver-initial }}
+        VAR_RELEASE_SEMVER_BUMP: ${{ inputs.var-release-semver-bump }}
+        VAR_PUBLISH_UPSTREAM_TAG_ALIAS: ${{ inputs.var-publish-upstream-tag-alias }}
+        VAR_SIGN_IMAGES: ${{ inputs.var-sign-images }}
+      run: |
+        set -euo pipefail
+
+        # Export caller-supplied KEY=VALUE pairs so envsubst below can
+        # resolve ${VAR} placeholders in the config file (see env-overrides
+        # input description).
+        if [ -n "$ENV_OVERRIDES" ]; then
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            export "${line?}"
+          done <<< "$ENV_OVERRIDES"
+        fi
+
+        if [ -f "$CONFIG_PATH" ]; then
+          echo "Loading configuration from $CONFIG_PATH"
+          # Expand ${VAR} references (e.g. ${DOCKER_HUB_REGISTRY}) against
+          # this job's environment before parsing, so secrets/vars never
+          # need to be hardcoded into the committed config file.
+          envsubst < "$CONFIG_PATH" > /tmp/docker-automation.resolved.yml
+        else
+          echo "::notice::No $CONFIG_PATH found; using built-in defaults for all settings."
+          echo "{}" > /tmp/docker-automation.resolved.yml
+        fi
+
+        python3 - <<'PYEOF'
+        import json
+        import os
+        import sys
+
+        try:
+            import yaml
+        except ImportError:
+            print("::error::PyYAML is required but not available on this runner.")
+            sys.exit(1)
+
+        with open("/tmp/docker-automation.resolved.yml", encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+
+        monitor = raw.get("monitor") or {}
+        release = raw.get("release") or {}
+
+        def as_bool(value, default):
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            return str(value).strip().lower() in ("true", "1", "yes", "on")
+
+        def as_csv(value):
+            if not value:
+                return ""
+            if isinstance(value, str):
+                return value
+            return ",".join(str(v) for v in value)
+
+        def as_lines(value):
+            if not value:
+                return ""
+            if isinstance(value, str):
+                return value
+            return "\n".join(str(v) for v in value)
+
+        def var(name):
+            """Reads a Repository-Variable-sourced override; '' means unset."""
+            return os.environ.get(name, "").strip()
+
+        def var_bool(name, config_value, default):
+            raw = var(name)
+            if raw != "":
+                return as_bool(raw, default)
+            return as_bool(config_value, default)
+
+        def var_str(name, config_value, default):
+            raw = var(name)
+            if raw != "":
+                return raw
+            return config_value if config_value not in (None, "") else default
+
+        def var_csv(name, config_value):
+            raw = var(name)
+            if raw != "":
+                return raw
+            return as_csv(config_value)
+
+        def var_json_lines(name, config_value):
+            """PATHS_IGNORE variable is a JSON array string; config value is a YAML list."""
+            raw = var(name)
+            if raw != "":
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        return "\n".join(str(v) for v in parsed)
+                except json.JSONDecodeError:
+                    print(f"::warning::{name} is not valid JSON; ignoring and falling back to config file/default.")
+            return as_lines(config_value)
+
+        outputs = {
+            "monitor_enabled": var_bool("VAR_MONITOR_ENABLED", monitor.get("enabled"), True),
+            "update_strategy": var_str("VAR_UPDATE_STRATEGY", monitor.get("update_strategy"), "patch"),
+            "update_policy": var_str("VAR_UPDATE_POLICY", monitor.get("update_policy"), "DIGEST_AND_VERSION"),
+            "auto_create_pr": var_bool("VAR_AUTO_CREATE_PR", monitor.get("auto_create_pr"), True),
+            "auto_merge": var_bool("VAR_AUTO_MERGE", monitor.get("auto_merge"), False),
+            "reviewers": var_csv("VAR_REVIEWERS", monitor.get("reviewers")),
+            "assignees": var_csv("VAR_ASSIGNEES", monitor.get("assignees")),
+            "release_branches": var_csv("VAR_RELEASE_BRANCHES", release.get("branches") or ["main"]),
+            "paths_ignore": var_json_lines("VAR_PATHS_IGNORE", release.get("paths_ignore")),
+            "dockerfile": var_str("VAR_DOCKERFILE", release.get("dockerfile"), "Dockerfile"),
+            "build_context": var_str("VAR_BUILD_CONTEXT", release.get("build_context"), "."),
+            "platforms": var_str("VAR_PLATFORMS", release.get("platforms"), "linux/amd64"),
+            "test_command": var_str("VAR_TEST_COMMAND", release.get("test_command"), ""),
+            "environment": var_str("VAR_ENVIRONMENT", release.get("environment"), "production"),
+            "scan_severity_threshold": var_str("VAR_SCAN_SEVERITY_THRESHOLD", release.get("scan_severity_threshold"), "CRITICAL,HIGH"),
+            "release_tag_strategy": var_str("VAR_RELEASE_TAG_STRATEGY", release.get("tag_strategy"), "BASE_TAG_INCREMENT"),
+            "release_prefix": var_str("VAR_RELEASE_PREFIX", release.get("prefix"), ""),
+            "release_increment_basename": var_str("VAR_RELEASE_INCREMENT_BASENAME", release.get("increment_basename"), "release"),
+            "release_semver_initial": var_str("VAR_RELEASE_SEMVER_INITIAL", release.get("semver_initial"), "v1.0.0"),
+            "release_semver_bump": var_str("VAR_RELEASE_SEMVER_BUMP", release.get("semver_bump"), "patch"),
+            "publish_upstream_tag_alias": var_bool("VAR_PUBLISH_UPSTREAM_TAG_ALIAS", release.get("publish_upstream_tag_alias"), False),
+            "sign_images": var_bool("VAR_SIGN_IMAGES", release.get("sign_images"), False),
+            "registries_json": json.dumps(release.get("registries", [])),
+        }
+
+        github_output = os.environ["GITHUB_OUTPUT"]
+        with open(github_output, "a", encoding="utf-8") as out:
+            for key, value in outputs.items():
+                value = "true" if value is True else "false" if value is False else value
+                if "\n" in str(value):
+                    delimiter = "EOF_LOAD_CONFIG"
+                    out.write(f"{key}<<{delimiter}\n{value}\n{delimiter}\n")
+                else:
+                    out.write(f"{key}={value}\n")
+
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_path:
+            with open(summary_path, "a", encoding="utf-8") as summary:
+                summary.write("### Docker Automation Configuration\n\n")
+                for key, value in outputs.items():
+                    if key == "registries_json":
+                        continue
+                    summary.write(f"- **{key}:** `{value}`\n")
+        PYEOF

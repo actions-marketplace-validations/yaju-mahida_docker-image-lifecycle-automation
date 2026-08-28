@@ -1,0 +1,168 @@
+name: 'Calculate Release Identifier'
+description: >
+  Calculates a consumer-controlled, immutable Git and OCI release tag.
+  It supports upstream-tag, increment, prefix, SemVer, date-prefix, and
+  digest-derived strategies and validates the result against Git and OCI
+  tag rules before any artifact is published.
+
+inputs:
+  base-tag:
+    description: 'The upstream base image tag; required for base-tag and upstream-tag strategies'
+    required: false
+    default: ''
+  strategy:
+    description: 'UPSTREAM_TAG | BASE_TAG_INCREMENT | PREFIX_INCREMENT | RELEASE_INCREMENT | SEMVER_INCREMENT | DATE_INCREMENT | DIGEST'
+    required: false
+    default: 'BASE_TAG_INCREMENT'
+  release-prefix:
+    description: 'Required prefix for PREFIX_INCREMENT and DATE_INCREMENT'
+    required: false
+    default: ''
+  increment-basename:
+    description: 'Base name for RELEASE_INCREMENT'
+    required: false
+    default: 'release'
+  semver-initial:
+    description: 'Initial version for SEMVER_INCREMENT'
+    required: false
+    default: 'v1.0.0'
+  semver-bump:
+    description: 'SemVer increment: patch, minor, or major'
+    required: false
+    default: 'patch'
+  image-digest:
+    description: 'Resolved base image digest, required for DIGEST'
+    required: false
+    default: ''
+
+outputs:
+  new_git_tag:
+    description: 'Validated immutable release identifier'
+    value: ${{ steps.calc.outputs.new_git_tag }}
+  upstream_tag_alias:
+    description: 'Exact upstream tag suitable only as an optional mutable OCI alias'
+    value: ${{ steps.calc.outputs.upstream_tag_alias }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: calc
+      shell: bash
+      env:
+        BASE_TAG: ${{ inputs.base-tag }}
+        STRATEGY: ${{ inputs.strategy }}
+        RELEASE_PREFIX: ${{ inputs.release-prefix }}
+        INCREMENT_BASENAME: ${{ inputs.increment-basename }}
+        SEMVER_INITIAL: ${{ inputs.semver-initial }}
+        SEMVER_BUMP: ${{ inputs.semver-bump }}
+        IMAGE_DIGEST: ${{ inputs.image-digest }}
+      run: |
+        set -euo pipefail
+
+        STRATEGY="$(printf '%s' "$STRATEGY" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
+        SEMVER_BUMP="$(printf '%s' "$SEMVER_BUMP" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+        git fetch --tags --force --quiet
+
+        fail() {
+          echo "::error::$1"
+          exit 1
+        }
+
+        require_value() {
+          [ -n "$2" ] || fail "$1 must not be empty for $STRATEGY."
+        }
+
+        next_increment() {
+          local base="$1" tag suffix highest=0
+          while IFS= read -r tag; do
+            case "$tag" in
+              "$base".[0-9]*)
+                suffix="${tag#"$base".}"
+                if [[ "$suffix" =~ ^[0-9]+$ ]] && [ "$suffix" -gt "$highest" ]; then
+                  highest="$suffix"
+                fi
+                ;;
+            esac
+          done < <(git tag --list "$base.[0-9]*")
+          printf '%s.%s' "$base" "$((highest + 1))"
+        }
+
+        validate_identifier() {
+          local tag="$1"
+          [ "${#tag}" -le 128 ] || fail "Release identifier exceeds the OCI tag limit of 128 characters: $tag"
+          [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] ||
+            fail "Release identifier is not a valid OCI tag: $tag"
+          git check-ref-format "refs/tags/$tag" ||
+            fail "Release identifier is not a valid Git tag: $tag"
+        }
+
+        next_semver() {
+          local latest major minor patch
+          latest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1 || true)"
+          if [ -z "$latest" ]; then
+            printf '%s' "$SEMVER_INITIAL"
+            return
+          fi
+          if ! [[ "$latest" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            fail "Latest SemVer tag '$latest' is invalid."
+          fi
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          case "$SEMVER_BUMP" in
+            patch) patch=$((patch + 1)) ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            *) fail "SEMVER_BUMP must be patch, minor, or major." ;;
+          esac
+          printf 'v%s.%s.%s' "$major" "$minor" "$patch"
+        }
+
+        case "$STRATEGY" in
+          UPSTREAM_TAG)
+            require_value "BASE_TAG" "$BASE_TAG"
+            if git rev-parse -q --verify "refs/tags/$BASE_TAG" >/dev/null; then
+              fail "UPSTREAM_TAG '$BASE_TAG' is already a Git release. Use it as a mutable OCI alias with an increment or DIGEST release identifier; Git tags must remain immutable."
+            fi
+            NEW_TAG="$BASE_TAG"
+            ;;
+          BASE_TAG_INCREMENT)
+            require_value "BASE_TAG" "$BASE_TAG"
+            NEW_TAG="$(next_increment "$BASE_TAG")"
+            ;;
+          PREFIX_INCREMENT)
+            require_value "RELEASE_PREFIX" "$RELEASE_PREFIX"
+            NEW_TAG="$(next_increment "$RELEASE_PREFIX")"
+            ;;
+          RELEASE_INCREMENT)
+            require_value "INCREMENT_BASENAME" "$INCREMENT_BASENAME"
+            NEW_TAG="$(next_increment "$INCREMENT_BASENAME")"
+            ;;
+          SEMVER_INCREMENT)
+            NEW_TAG="$(next_semver)"
+            ;;
+          DATE_INCREMENT)
+            require_value "RELEASE_PREFIX" "$RELEASE_PREFIX"
+            NEW_TAG="$(next_increment "${RELEASE_PREFIX}-$(date -u +%Y)")"
+            ;;
+          DIGEST)
+            require_value "IMAGE_DIGEST" "$IMAGE_DIGEST"
+            SHORT_DIGEST="${IMAGE_DIGEST#sha256:}"
+            [[ "$SHORT_DIGEST" =~ ^[a-f0-9]{12,}$ ]] ||
+              fail "IMAGE_DIGEST must be a sha256 digest."
+            NEW_TAG="sha-${SHORT_DIGEST:0:12}"
+            ;;
+          *)
+            fail "Unsupported RELEASE_TAG_STRATEGY '$STRATEGY'."
+            ;;
+        esac
+
+        validate_identifier "$NEW_TAG"
+        if git rev-parse -q --verify "refs/tags/$NEW_TAG" >/dev/null; then
+          fail "Calculated release identifier already exists: $NEW_TAG"
+        fi
+
+        echo "strategy=$STRATEGY" >> "$GITHUB_OUTPUT"
+        echo "new_git_tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+        echo "upstream_tag_alias=$BASE_TAG" >> "$GITHUB_OUTPUT"
+        echo "### Release Identifier: \`$NEW_TAG\`" >> "$GITHUB_STEP_SUMMARY"

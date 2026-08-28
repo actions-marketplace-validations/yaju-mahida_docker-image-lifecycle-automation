@@ -1,0 +1,104 @@
+name: 'Check Paths Changed'
+description: >
+  Determines whether the commits being processed touch any file NOT covered
+  by the supplied ignore-glob patterns. Used to make `paths_ignore` a
+  genuinely config-driven setting (unlike a trigger's `paths-ignore:`, which
+  GitHub evaluates from static workflow YAML before checkout and therefore
+  cannot be sourced from a data file).
+
+inputs:
+  patterns:
+    description: >
+      Newline-separated glob patterns to ignore (e.g. from
+      load-automation-config paths_ignore output). Uses bash `case`
+      pattern matching (extended by globstar), which approximates but is
+      not identical to GitHub's gitignore-style paths-ignore syntax -
+      prefer simple patterns like '*.md', 'docs/*', '.github/*'.
+    required: false
+    default: ''
+  base-ref:
+    description: 'Git ref to diff against. Defaults to the previous commit on the current ref.'
+    required: false
+    default: ''
+
+outputs:
+  has_relevant_changes:
+    description: '"true" when at least one changed file does not match any ignore pattern'
+    value: ${{ steps.check.outputs.has_relevant_changes }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: check
+      shell: bash
+      env:
+        PATTERNS: ${{ inputs.patterns }}
+        BASE_REF: ${{ inputs.base-ref }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "$PATTERNS" ]; then
+          echo "No ignore patterns configured; treating all changes as relevant."
+          echo "has_relevant_changes=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        DIFF_BASE="$BASE_REF"
+        if [ -z "$DIFF_BASE" ]; then
+          DIFF_BASE="${GITHUB_EVENT_BEFORE:-HEAD~1}"
+        fi
+
+        if ! git cat-file -e "${DIFF_BASE}^{commit}" 2>/dev/null; then
+          echo "::warning::Base ref '$DIFF_BASE' not found (e.g. first commit or shallow clone); treating all changes as relevant."
+          echo "has_relevant_changes=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        CHANGED_FILES="$(git diff --name-only "$DIFF_BASE" HEAD)"
+        if [ -z "$CHANGED_FILES" ]; then
+          echo "No changed files detected; treating as no relevant changes."
+          echo "has_relevant_changes=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "Changed files:"
+        echo "$CHANGED_FILES" | sed 's/^/  /'
+
+        HAS_RELEVANT="false"
+        while IFS= read -r FILE; do
+          [ -n "$FILE" ] || continue
+          MATCHED="false"
+          while IFS= read -r PATTERN; do
+            [ -n "$PATTERN" ] || continue
+            # shopt globstar allows ** to match across directory separators
+            shopt -s globstar nullglob dotglob
+            case "$FILE" in
+              $PATTERN) MATCHED="true" ;;
+            esac
+            if [ "$MATCHED" = "false" ]; then
+              # Fallback for patterns like 'docs/**' matching 'docs/x/y.md'
+              case "/$FILE" in
+                /$PATTERN) MATCHED="true" ;;
+              esac
+            fi
+            if [ "$MATCHED" = "false" ] && [ "${PATTERN#\*\*/}" != "$PATTERN" ]; then
+              # bash `case` treats "**" as a single "*", which requires a
+              # literal "/" before the remainder - so "**/*.md" alone would
+              # never match a root-level "README.md". Also try the pattern
+              # with a leading "**/" stripped, matching gitignore-style
+              # "**/*.md matches at every level including the root" semantics.
+              ROOT_PATTERN="${PATTERN#\*\*/}"
+              case "$FILE" in
+                $ROOT_PATTERN) MATCHED="true" ;;
+              esac
+            fi
+          done <<< "$PATTERNS"
+
+          if [ "$MATCHED" = "false" ]; then
+            echo "Relevant change (not covered by ignore patterns): $FILE"
+            HAS_RELEVANT="true"
+            break
+          fi
+        done <<< "$CHANGED_FILES"
+
+        echo "has_relevant_changes=$HAS_RELEVANT" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,190 @@
+name: 'Generate Release Notes, Changelog and GitHub Release'
+description: >
+  Creates an annotated Git tag, generates release notes from commit
+  history, maintains CHANGELOG.md (via PR on protected branches), and
+  creates the GitHub Release. Consolidates logic previously duplicated
+  inline in the Docker Image Release Automation workflow.
+
+inputs:
+  new-tag:
+    description: 'The validated immutable release identifier to create'
+    required: true
+  base-version:
+    description: 'The base image tag this release is built from'
+    required: true
+  published-image-reference:
+    description: 'Human-readable "primary" published image reference for release notes (e.g. ghcr.io/org/image:1.2.3)'
+    required: true
+  registry-url:
+    description: 'Optional URL to the primary registry listing for this image'
+    required: false
+    default: ''
+  pr-reviewers:
+    description: 'Comma-separated reviewers to add to the changelog PR'
+    required: false
+    default: ''
+  pr-assignees:
+    description: 'Comma-separated assignees to add to the changelog PR'
+    required: false
+    default: ''
+  sbom-path:
+    description: 'Optional SPDX SBOM file to attach to the GitHub Release'
+    required: false
+    default: ''
+
+outputs:
+  previous_git_tag:
+    description: 'Most recent tag before this release (changelog baseline)'
+    value: ${{ steps.tag.outputs.previous_git_tag }}
+  release_url:
+    description: 'URL of the created/existing GitHub Release'
+    value: ${{ steps.release.outputs.release_url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: tag
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        NEW_TAG: ${{ inputs.new-tag }}
+        BASE_VERSION: ${{ inputs.base-version }}
+      run: |
+        set -euo pipefail
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        PREVIOUS_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+        echo "previous_git_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+
+        git tag -a "$NEW_TAG" -m "Release $NEW_TAG (base image: $BASE_VERSION)"
+        git push origin "refs/tags/$NEW_TAG"
+        echo "Tag pushed: $NEW_TAG"
+
+    - id: release
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        NEW_TAG: ${{ inputs.new-tag }}
+        PREVIOUS_TAG: ${{ steps.tag.outputs.previous_git_tag }}
+        BASE_VERSION: ${{ inputs.base-version }}
+        PUBLISHED_IMAGE_REFERENCE: ${{ inputs.published-image-reference }}
+        REGISTRY_URL: ${{ inputs.registry-url }}
+        PR_REVIEWERS: ${{ inputs.pr-reviewers }}
+        PR_ASSIGNEES: ${{ inputs.pr-assignees }}
+        SBOM_PATH: ${{ inputs.sbom-path }}
+      run: |
+        set -euo pipefail
+
+        if [ "${GITHUB_REF_TYPE}" != "branch" ]; then
+          echo "::error::Must run on a branch ref to push CHANGELOG.md updates."
+          exit 1
+        fi
+        BRANCH_NAME="${GITHUB_REF_NAME}"
+
+        RELEASE_EXISTS="false"
+        if gh release view "$NEW_TAG" >/dev/null 2>&1; then
+          RELEASE_EXISTS="true"
+        fi
+
+        RELEASE_TIME_UTC="$(date -u '+%Y-%m-%d %H:%M:%S %Z')"
+
+        if [ -n "$PREVIOUS_TAG" ]; then
+          COMMIT_RANGE="$PREVIOUS_TAG..$NEW_TAG"
+        else
+          COMMIT_RANGE="$NEW_TAG"
+        fi
+
+        {
+          printf '%s\n' "- **Base Image:** \`$BASE_VERSION\`"
+          printf '%s\n' "- **Published Image:** \`$PUBLISHED_IMAGE_REFERENCE\`"
+          printf '%s\n' "- **GitHub Commit:** \`${{ github.sha }}\`"
+          printf '%s\n' "- **Released:** $RELEASE_TIME_UTC"
+          [ -n "$REGISTRY_URL" ] && printf '%s\n\n' "- **Registry:** $REGISTRY_URL"
+          printf '## Changes Since %s\n\n' "${PREVIOUS_TAG:-the beginning of this repository}"
+        } > release_notes.md
+
+        git log --pretty=format:"* [%h](${{ github.server_url }}/${{ github.repository }}/commit/%H) %s" "$COMMIT_RANGE" >> release_notes.md
+        printf '\n' >> release_notes.md
+
+        if [ -n "$PREVIOUS_TAG" ]; then
+          printf '\n**Full Changelog:** %s/compare/%s...%s\n' \
+            "${{ github.server_url }}/${{ github.repository }}" "$PREVIOUS_TAG" "$NEW_TAG" >> release_notes.md
+        fi
+
+        CHANGELOG_FILE="CHANGELOG.md"
+        if [ ! -f "$CHANGELOG_FILE" ]; then
+          {
+            printf '# Changelog\n\n'
+            printf 'All notable changes to this Docker image will be documented in this file.\n\n'
+          } > "$CHANGELOG_FILE"
+        fi
+
+        if ! grep -Fq "## **\`$NEW_TAG\`**" "$CHANGELOG_FILE"; then
+          {
+            printf '## **`%s`**\n\n' "$NEW_TAG"
+            cat release_notes.md
+            printf '\n\n'
+          } > changelog_entry.md
+
+          awk '
+            BEGIN {
+              while ((getline line < "changelog_entry.md") > 0) { entry = entry line ORS }
+              close("changelog_entry.md")
+            }
+            { if (!inserted && $0 ~ /^## /) { printf "%s", entry; inserted = 1 } print }
+            END { if (!inserted) printf "%s", entry }
+          ' "$CHANGELOG_FILE" > "${CHANGELOG_FILE}.tmp"
+          mv "${CHANGELOG_FILE}.tmp" "$CHANGELOG_FILE"
+          rm -f changelog_entry.md
+        fi
+
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        if ! git diff --quiet -- "$CHANGELOG_FILE"; then
+          git add "$CHANGELOG_FILE"
+          git commit -m "$NEW_TAG: add release notes to CHANGELOG.md"
+          git fetch origin "$BRANCH_NAME"
+
+          if git rebase "origin/$BRANCH_NAME"; then
+            if [ "$BRANCH_NAME" = "main" ]; then
+              SAFE_TAG="$(echo "$NEW_TAG" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-')"
+              CHANGELOG_BRANCH="automation/changelog-${SAFE_TAG}"
+              if git push origin "HEAD:refs/heads/$CHANGELOG_BRANCH"; then
+                PR_NUMBER="$(gh pr list --base "$BRANCH_NAME" --head "$CHANGELOG_BRANCH" --state open --json number --jq '.[0].number // empty')"
+                if [ -z "$PR_NUMBER" ]; then
+                  gh pr create --base "$BRANCH_NAME" --head "$CHANGELOG_BRANCH" \
+                    --title "$NEW_TAG: add release notes to CHANGELOG.md" \
+                    --body "Automated changelog update for release \`$NEW_TAG\`." || true
+                  PR_NUMBER="$(gh pr list --base "$BRANCH_NAME" --head "$CHANGELOG_BRANCH" --state open --json number --jq '.[0].number // empty')"
+                  [ -n "$PR_NUMBER" ] && [ -n "$PR_REVIEWERS" ] && gh pr edit "$PR_NUMBER" --add-reviewer "$PR_REVIEWERS" || true
+                  [ -n "$PR_NUMBER" ] && [ -n "$PR_ASSIGNEES" ] && gh pr edit "$PR_NUMBER" --add-assignee "$PR_ASSIGNEES" || true
+                fi
+              fi
+            else
+              git push origin "HEAD:$BRANCH_NAME" || echo "::warning::Failed to push CHANGELOG.md directly."
+            fi
+          else
+            git rebase --abort || true
+            git reset --hard HEAD~1
+            echo "::warning::Rebase failed; skipping changelog persistence."
+          fi
+        fi
+
+        RELEASE_URL=""
+        if [ "$RELEASE_EXISTS" = "true" ]; then
+          RELEASE_URL="$(gh release view "$NEW_TAG" --json url --jq .url)"
+        else
+          gh release create "$NEW_TAG" --title "$NEW_TAG" --notes-file release_notes.md --latest --verify-tag
+          RELEASE_URL="$(gh release view "$NEW_TAG" --json url --jq .url)"
+        fi
+        if [ -n "$SBOM_PATH" ]; then
+          [ -f "$SBOM_PATH" ] || {
+            echo "::error::Configured SBOM file does not exist: $SBOM_PATH"
+            exit 1
+          }
+          gh release upload "$NEW_TAG" "$SBOM_PATH#sbom.spdx.json" --clobber
+        fi
+        echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
+        echo "### Release: [$NEW_TAG]($RELEASE_URL)" >> "$GITHUB_STEP_SUMMARY"

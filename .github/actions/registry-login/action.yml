@@ -1,0 +1,127 @@
+name: 'Registry Login'
+description: >
+  Authenticates Docker/Buildx against one of the supported registry types
+  using a single, consistent interface. Supports GHCR, Docker Hub, Azure
+  Container Registry (ACR), Amazon ECR (via OIDC/assume-role), Quay.io,
+  Harbor, JFrog Artifactory, GitLab Container Registry, DigitalOcean
+  Container Registry, Oracle Cloud Infrastructure Registry (OCIR), and any
+  generic private/OCI-compliant registry reachable via docker/login-action.
+
+inputs:
+  registry-type:
+    description: 'One of: ghcr, dockerhub, acr, ecr, quay, harbor, artifactory, gitlab, digitalocean, ocir, private'
+    required: true
+  registry:
+    description: 'Registry hostname (required for acr/ecr/harbor/artifactory/ocir/private, e.g. myregistry.azurecr.io)'
+    required: false
+    default: ''
+  username:
+    description: 'Registry username/identity'
+    required: false
+    default: ''
+  password:
+    description: 'Registry password/token'
+    required: false
+    default: ''
+  aws-region:
+    description: 'AWS region for ECR login'
+    required: false
+    default: ''
+  aws-role-arn:
+    description: 'IAM role ARN to assume via OIDC for ECR login'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Login to GHCR
+      if: inputs.registry-type == 'ghcr'
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    - name: Login to Docker Hub
+      if: inputs.registry-type == 'dockerhub'
+      uses: docker/login-action@v4
+      with:
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    - name: Login to Azure Container Registry
+      if: inputs.registry-type == 'acr'
+      uses: docker/login-action@v4
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    - name: Configure AWS credentials (OIDC)
+      if: inputs.registry-type == 'ecr'
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-region: ${{ inputs.aws-region }}
+        role-to-assume: ${{ inputs.aws-role-arn }}
+
+    - name: Login to Amazon ECR
+      if: inputs.registry-type == 'ecr'
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Login to Quay.io
+      if: inputs.registry-type == 'quay'
+      uses: docker/login-action@v4
+      with:
+        registry: quay.io
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    - name: Login to Harbor
+      if: inputs.registry-type == 'harbor'
+      uses: docker/login-action@v4
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    - name: Login to JFrog Artifactory
+      if: inputs.registry-type == 'artifactory'
+      uses: docker/login-action@v4
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    - name: Login to GitLab Container Registry
+      if: inputs.registry-type == 'gitlab'
+      uses: docker/login-action@v4
+      with:
+        registry: ${{ inputs.registry || 'registry.gitlab.com' }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    - name: Login to DigitalOcean Container Registry
+      if: inputs.registry-type == 'digitalocean'
+      uses: docker/login-action@v4
+      with:
+        registry: ${{ inputs.registry || 'registry.digitalocean.com' }}
+        # DOCR accepts the same token as both username and password.
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    - name: Login to Oracle Cloud Infrastructure Registry (OCIR)
+      if: inputs.registry-type == 'ocir'
+      uses: docker/login-action@v4
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    - name: Login to private/generic OCI registry
+      if: inputs.registry-type == 'private'
+      uses: docker/login-action@v4
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}

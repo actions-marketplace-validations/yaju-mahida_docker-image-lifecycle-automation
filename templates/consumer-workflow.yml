@@ -1,0 +1,41 @@
+# Copy to .github/workflows/docker-image-lifecycle.yml in a consumer image
+# repository. The consumer owns triggers, Repository Variables, Secrets, and
+# Environment approvals; the platform owns the reusable lifecycle logic.
+name: Docker Image Lifecycle
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+  id-token: write
+
+jobs:
+  monitor:
+    if: github.event_name != 'push'
+    uses: your-org/docker-image-lifecycle/.github/workflows/reusable-base-image-monitor.yml@v1
+    with:
+      var-monitor-enabled: ${{ vars.BASE_IMAGE_MONITOR_ENABLED }}
+      var-update-strategy: ${{ vars.BASE_IMAGE_UPDATE_STRATEGY }}
+      var-update-policy: ${{ vars.BASE_IMAGE_UPDATE_POLICY }}
+    secrets: inherit
+
+  release:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    uses: your-org/docker-image-lifecycle/.github/workflows/reusable-docker-release.yml@v1
+    with:
+      var-dockerfile: ${{ vars.DOCKERFILE_PATH }}
+      var-build-context: ${{ vars.BUILD_CONTEXT }}
+      var-platforms: ${{ vars.BUILD_PLATFORMS }}
+      var-environment: ${{ vars.DEPLOYMENT_ENVIRONMENT }}
+      var-release-tag-strategy: ${{ vars.RELEASE_TAG_STRATEGY }}
+      var-sign-images: ${{ vars.SIGN_IMAGES }}
+      var-publish-ghcr: ${{ vars.PUBLISH_GHCR }}
+      var-ghcr-image: ${{ vars.GHCR_IMAGE }}
+    secrets: inherit

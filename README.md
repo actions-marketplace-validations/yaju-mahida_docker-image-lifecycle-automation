@@ -1,132 +1,110 @@
 # Docker Image Lifecycle
 
-Reusable GitHub Actions and workflows for safely monitoring, building,
-testing, scanning, releasing, and publishing Docker images.
+[![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-Docker%20Image%20Lifecycle-blue?logo=github)](https://github.com/marketplace)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![OCI](https://img.shields.io/badge/OCI-compatible-2496ED?logo=docker&logoColor=white)](https://opencontainers.org/)
 
-[![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-Docker%20Image%20Automation-blue?logo=github)](https://github.com/marketplace)
-[![Docker](https://img.shields.io/badge/container-Docker-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
-[![Security](https://img.shields.io/badge/security-DevSecOps-green)](SECURITY.md)
+Automate the secure container image lifecycle with GitHub Actions: detect
+base-image changes by digest, create reviewable updates, build and test
+multi-platform images, scan vulnerabilities, generate SBOMs, sign published
+digests, create releases, and publish to OCI registries.
 
-## Why this project exists
+## Marketplace Action and lifecycle workflows
 
-Docker image repositories often duplicate the same workflow logic: checking
-upstream base images, opening update pull requests, building multiple
-architectures, scanning images, creating releases, and publishing to one or
-more registries. This project centralizes that lifecycle while keeping
-repository-specific settings in the consumer repository.
+The root Marketplace Action resolves any OCI image tag to its immutable
+manifest digest. Use it for focused digest monitoring:
 
-The recommended integration is a thin consumer workflow calling reusable
-workflows from this repository. Repository Variables are the primary
-configuration surface; an optional YAML file remains available for complex
-multi-registry configurations.
+```yaml
+- id: upstream
+  uses: yaju-mahida/docker-image-lifecycle@v1
+  with:
+    registry: docker.io
+    repository: library/nginx
+    tag: stable
 
-## Capabilities
-
-- Scheduled base image monitoring and Dockerfile update pull requests
-- Patch, minor, and major upstream version strategies
-- Consumer-owned schedules and release triggers
-- Consumer-controlled immutable release identifiers: upstream, increment,
-  prefix, release, SemVer, date-prefix, or digest-derived
-- Multi-platform Docker Buildx builds
-- Container smoke tests
-- Hadolint Dockerfile linting
-- Trivy vulnerability scanning
-- SPDX SBOM generation
-- BuildKit provenance and SBOM attestations
-- GitHub Releases, generated changelogs, and attached SPDX SBOMs
-- Environment-gated publication
-- GHCR, Docker Hub, ACR, ECR, Quay, Harbor, Artifactory, GitLab Registry,
-  DigitalOcean Container Registry, OCIR, and generic OCI registries
-- OIDC authentication for cloud registries where supported
-
-## Architecture
-
-```text
-Consumer repository
-  ├─ Dockerfile
-  ├─ Repository Variables and Secrets
-  └─ thin caller workflow
-          │
-          ▼
-  reusable-base-image-monitor
-          │
-          ├─ inspect upstream image
-          ├─ compare digest/version
-          └─ open update pull request
-                    │
-              review and merge
-                    │
-                    ▼
-             push to release branch
-                    │
-                    ▼
-  reusable-docker-release
-          ├─ build
-          ├─ test
-          ├─ lint and scan
-          ├─ generate SBOM/provenance
-          ├─ publish immutable OCI image
-          ├─ optionally sign the published digest
-          └─ tag and create GitHub Release with the SBOM attached
+- run: echo "${{ steps.upstream.outputs.digest }}"
 ```
 
-The monitor never invokes the release workflow directly. A successful merge
-to the release branch produces the authoritative `push` event.
+For the complete lifecycle, copy
+[`templates/consumer-workflow.yml`](templates/consumer-workflow.yml) into a
+consumer repository. It calls the reusable monitoring and release workflows.
+
+```text
+Scheduled monitor
+        ↓
+OCI digest and version detection
+        ↓
+Reviewable Dockerfile update PR
+        ↓
+Approval and merge
+        ↓
+Build → test → scan → SBOM → publish → sign → GitHub Release
+```
+
+## Core capabilities
+
+- OCI-native, digest-first base image monitoring for public and private
+  Docker Hub, GHCR, ACR, ECR, Quay, Harbor, Artifactory, GitLab, OCIR, and
+  generic OCI registries
+- Dockerfile `image:tag@sha256:...` pinning and same-tag rebuild detection
+- Configurable update policies and patch/minor/major version constraints
+- Multi-platform Docker Buildx image builds and smoke testing
+- Hadolint, Trivy, SPDX SBOMs, BuildKit provenance, and optional keyless
+  Cosign signing of published image digests
+- Consumer-controlled release identifiers and opt-in mutable upstream aliases
+- Publication to GHCR, Docker Hub, ACR, ECR, Quay, Harbor, Artifactory,
+  GitLab Registry, DigitalOcean, OCIR, and generic OCI registries
+- GitHub Environments, least-privilege permissions, OIDC, and reviewed PRs
 
 ## Quick start
 
-1. Copy [`docs/consumer-workflow-example.yml`](docs/consumer-workflow-example.yml)
-   to `.github/workflows/docker-automation.yml` in your image repository.
-2. Replace `your-org/docker-image-lifecycle` with the repository reference
-   you use and pin a release such as `@v1` or an immutable commit SHA.
-3. Set Repository Variables such as `DOCKERFILE_PATH`, `BUILD_PLATFORMS`,
-   `IMAGE_NAME`, and the relevant `PUBLISH_*` values.
-4. Add only the registry Secrets required by the enabled targets.
-5. Configure the named GitHub Environment if publication requires approval.
-6. Run the workflow manually in dry-run mode before enabling production
-   publication.
+1. Copy [`templates/consumer-workflow.yml`](templates/consumer-workflow.yml)
+   to `.github/workflows/docker-image-lifecycle.yml` in the image repository.
+2. Replace `your-org/docker-image-lifecycle@v1` with the platform reference.
+3. Configure Repository Variables such as `DOCKERFILE_PATH`,
+   `BUILD_PLATFORMS`, `RELEASE_TAG_STRATEGY`, and the selected `PUBLISH_*`
+   registry settings.
+4. Add only the matching registry secrets and create the configured GitHub
+   Environment for approval-gated publication.
+5. Run the caller manually in dry-run mode before enabling scheduled and
+   production releases.
 
-See [the installation guide](docs/INSTALLATION.md) and
-[the configuration guide](docs/CONFIGURATION.md) for complete details.
+## Supported integration models
+
+| Need | Use |
+|---|---|
+| Resolve an OCI tag to a digest | Root Marketplace Action (`yaju-mahida/docker-image-lifecycle@v1`) |
+| Monitor a Dockerfile and create update PRs | `reusable-base-image-monitor.yml` |
+| Build, secure, release, and publish an image | `reusable-docker-release.yml` |
+| Deploy a standard consumer configuration | `templates/consumer-workflow.yml` |
+| Configure multiple/custom registries | `templates/docker-automation.yml` |
 
 ## Documentation
 
 | Topic | Guide |
 |---|---|
-| Architecture and lifecycle | [Architecture Guide](docs/ARCHITECTURE.md) |
-| Installation | [Installation Guide](docs/INSTALLATION.md) |
-| Variables and secrets | [Configuration Guide](docs/CONFIGURATION.md) |
-| Registry setup | [Registry Publishing Guide](docs/REGISTRIES.md) |
+| Install and private-repository access | [Installation](docs/INSTALLATION.md) |
 | Consumer onboarding | [Consumer Guide](docs/CONSUMER_GUIDE.md) |
-| Base image monitoring | [Monitoring Guide](docs/MONITORING.md) |
-| Security | [Security Documentation](SECURITY.md) |
-| Examples | [Examples](docs/EXAMPLES.md) |
-| FAQ | [FAQ](docs/FAQ.md) |
-| Migration | [Migration Guide](docs/MIGRATION.md) |
-| Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Governance | [GOVERNANCE.md](GOVERNANCE.md) |
-| Marketplace listing | [Marketplace Metadata](docs/MARKETPLACE.md) |
+| Variables, policies, and release strategies | [Configuration](docs/CONFIGURATION.md) |
+| Digest-first monitoring | [Monitoring](docs/MONITORING.md) |
+| Registry publishing | [Registries](docs/REGISTRIES.md) |
+| Architecture | [Architecture](docs/ARCHITECTURE.md) |
+| Public examples | [Examples](docs/EXAMPLES.md) |
+| Marketplace release information | [Marketplace](docs/MARKETPLACE.md) |
+| Security policy | [Security](SECURITY.md) |
 
-## Support and compatibility
+## Security
 
-The workflows run on GitHub-hosted Ubuntu runners and use Docker Buildx.
-Consumers should use a supported GitHub Actions plan with workflow calls,
-Environments, and the permissions required by their selected registries.
+Use immutable image digests or release tags for deployment. Mutable aliases
+such as `latest`, `stable`, and upstream tags are opt-in convenience labels,
+not secure deployment inputs. Set `SIGN_IMAGES=true` to keylessly sign every
+published image digest using Cosign and GitHub OIDC.
 
-The platform is designed for public repositories, private repositories, and
-organization-managed enterprise repositories. Pin action references, use
-least-privilege permissions, and test upgrades in a non-production consumer
-before adopting a new major version.
+See [SECURITY.md](SECURITY.md) for reporting and responsibility guidance.
 
-## Contributing
+## Contributing and license
 
-Bug reports, documentation improvements, registry integrations, and workflow
-hardening are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening
-a pull request.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md), the
+[Code of Conduct](CODE_OF_CONDUCT.md), and [Governance](GOVERNANCE.md).
 
-## License
-
-Add an OSI-approved license file before publishing this repository. MIT or
-Apache-2.0 are common choices for an automation library; the maintainers
-should select and document the license that matches the project's ownership
-and contribution policy.
+Licensed under the [Apache License 2.0](LICENSE).

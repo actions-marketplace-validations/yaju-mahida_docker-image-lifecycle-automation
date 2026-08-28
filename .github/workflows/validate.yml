@@ -1,0 +1,60 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-yaml:
+    name: Validate Action Metadata and Workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse YAML files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          import yaml
+
+          paths = [Path('action.yml'), *Path('.github').rglob('*.yml'), *Path('examples').glob('*.yml'), *Path('templates').glob('*.yml')]
+          for path in paths:
+              yaml.safe_load(path.read_text(encoding='utf-8'))
+              print(f'Validated {path}')
+          PYEOF
+      - name: Validate Marketplace metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f action.yml
+          grep -q '^name:' action.yml
+          grep -q '^description:' action.yml
+          grep -q '^runs:' action.yml
+          grep -q '^branding:' action.yml
+
+  smoke-test-root-action:
+    name: Resolve Public OCI Digest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: digest
+        uses: ./
+        with:
+          registry: docker.io
+          repository: library/alpine
+          tag: '3.20'
+      - name: Assert digest output
+        shell: bash
+        env:
+          RESOLVED: ${{ steps.digest.outputs.resolved }}
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test "$RESOLVED" = 'true'
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]

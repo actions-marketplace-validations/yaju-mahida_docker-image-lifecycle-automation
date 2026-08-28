@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability report
+    url: https://github.com/yaju-mahida/docker-image-lifecycle/security/advisories/new
+    about: Do not report undisclosed vulnerabilities in public issues.
+  - name: Documentation and configuration guide
+    url: https://github.com/yaju-mahida/docker-image-lifecycle/tree/main/docs
+    about: Review the installation, configuration, and registry documentation first.

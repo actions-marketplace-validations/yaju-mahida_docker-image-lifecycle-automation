@@ -1,67 +1,29 @@
-# Examples
+# Public examples
 
-Replace `your-org/docker-image-lifecycle` with the public repository
-reference used by your installation and pin a release tag or commit SHA.
+All examples use the generic `your-org/docker-image-lifecycle@v1` reference.
+Replace `your-org` with the owner of your approved platform fork or the public
+upstream repository.
 
-## GHCR only
+## Marketplace digest resolver
 
-```text
-PUBLISH_GHCR=true
-GHCR_IMAGE=ghcr.io/organization-name/image-name
-```
+[`examples/digest-monitor.yml`](../examples/digest-monitor.yml) resolves a
+public OCI image to an immutable digest. It is the smallest useful adoption
+path and works independently of the full lifecycle workflows.
 
-No registry Secret is required when `GITHUB_TOKEN` has package write access.
+## Full lifecycle consumer
 
-## Docker Hub only
+[`templates/consumer-workflow.yml`](../templates/consumer-workflow.yml)
+provides a consumer-owned schedule and release-branch trigger for the
+reusable monitor and release workflows.
 
-```text
-PUBLISH_DOCKERHUB=true
-DOCKERHUB_IMAGE=organization-name/image-name
-```
+## Advanced configuration
 
-Secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
+[`templates/docker-automation.yml`](../templates/docker-automation.yml)
+shows the optional configuration file for consumers with multiple registry
+instances or reviewable nested configuration.
 
-## GHCR and Docker Hub
+## Registry targets
 
-```text
-PUBLISH_GHCR=true
-GHCR_IMAGE=ghcr.io/organization-name/image-name
-PUBLISH_DOCKERHUB=true
-DOCKERHUB_IMAGE=organization-name/image-name
-```
-
-## ACR
-
-```text
-PUBLISH_ACR=true
-ACR_IMAGE=your-registry.azurecr.io/image-name
-```
-
-Secrets: `ACR_USERNAME`, `ACR_PASSWORD`, unless using a provider-supported
-federated identity design.
-
-## ECR
-
-```text
-PUBLISH_ECR=true
-ECR_IMAGE=123456789012.dkr.ecr.us-east-1.amazonaws.com/image-name
-AWS_REGION=us-east-1
-```
-
-Secret: `AWS_ROLE_ARN`. Configure a restrictive GitHub OIDC trust policy.
-
-## Custom registry
-
-```text
-PUBLISH_PRIVATE=true
-PRIVATE_REGISTRY_HOST=registry.example.com
-PRIVATE_IMAGE=registry.example.com/project/image-name
-```
-
-Secrets: `PRIVATE_REGISTRY_USERNAME`, `PRIVATE_REGISTRY_PASSWORD`.
-
-## Multi-registry configuration file
-
-Use `docs/docker-automation.yml.example` when a repository needs multiple
-instances of a registry type. Keep credentials in Secrets; the file should
-contain only non-sensitive image paths and hosts.
+Use the corresponding `PUBLISH_<TYPE>` and `<TYPE>_IMAGE` Repository
+Variables documented in [Registry Publishing](REGISTRIES.md). Credentials
+belong in GitHub Secrets or protected Environments, never in examples.

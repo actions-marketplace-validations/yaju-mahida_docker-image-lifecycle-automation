@@ -1,0 +1,62 @@
+name: 'Docker Image Lifecycle'
+description: >
+  Resolve an OCI image tag to its immutable manifest digest. Use it as a
+  digest-first building block for base-image monitoring, policy decisions,
+  and secure container-image releases across OCI-compatible registries.
+
+inputs:
+  registry:
+    description: 'Registry host, for example docker.io, ghcr.io, or registry.example.com'
+    required: true
+  repository:
+    description: 'Registry repository path, for example library/nginx or organization/image-name'
+    required: true
+  tag:
+    description: 'Image tag to resolve'
+    required: true
+  username:
+    description: 'Optional read-only registry username for private images or rate-limit relief'
+    required: false
+    default: ''
+  password:
+    description: 'Optional read-only registry password or token'
+    required: false
+    default: ''
+  verify-stability:
+    description: 'Resolve twice and require matching digests before returning a result'
+    required: false
+    default: 'true'
+
+outputs:
+  digest:
+    description: 'Resolved immutable manifest digest'
+    value: ${{ steps.resolve.outputs.digest }}
+  resolved:
+    description: 'true when a stable digest was resolved'
+    value: ${{ steps.resolve.outputs.resolved }}
+  media_type:
+    description: 'OCI/Docker manifest media type'
+    value: ${{ steps.resolve.outputs.media_type }}
+  is_multi_arch:
+    description: 'true when the tag resolves to a multi-architecture index'
+    value: ${{ steps.resolve.outputs.is_multi_arch }}
+  platforms:
+    description: 'Comma-separated platforms included in a multi-architecture index'
+    value: ${{ steps.resolve.outputs.platforms }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      uses: yaju-mahida/docker-image-lifecycle/.github/actions/resolve-image-digest@v1
+      with:
+        registry: ${{ inputs.registry }}
+        repository: ${{ inputs.repository }}
+        tag: ${{ inputs.tag }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+        verify-stability: ${{ inputs.verify-stability }}
+
+branding:
+  icon: package
+  color: blue

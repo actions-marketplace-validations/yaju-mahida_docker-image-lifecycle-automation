@@ -1,0 +1,22 @@
+# Optional advanced configuration for a consumer repository. Copy this file
+# to .github/docker-automation.yml only when scalar Repository Variables are
+# insufficient, such as when publishing to multiple registry instances.
+monitor:
+  enabled: true
+  update_strategy: patch
+  update_policy: DIGEST_AND_VERSION
+  auto_create_pr: true
+  auto_merge: false
+
+release:
+  dockerfile: Dockerfile
+  build_context: .
+  platforms: linux/amd64,linux/arm64
+  environment: production
+  scan_severity_threshold: CRITICAL,HIGH
+  tag_strategy: BASE_TAG_INCREMENT
+  publish_upstream_tag_alias: false
+  sign_images: true
+  registries:
+    - type: ghcr
+      image: ghcr.io/organization-name/image-name

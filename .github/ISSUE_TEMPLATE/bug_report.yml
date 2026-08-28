@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible problem with an action or reusable workflow.
+title: '[Bug]: '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 'Remove secrets, private image names, registry hosts, and workflow logs before submitting.'
+  - type: input
+    id: version
+    attributes:
+      label: Platform version
+      description: The immutable tag or commit SHA used by the consumer.
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Marketplace digest resolver
+        - Base image monitor workflow
+        - Docker release workflow
+        - Registry publishing
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized logs
+    validations:
+      required: true

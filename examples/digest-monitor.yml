@@ -1,0 +1,21 @@
+# Resolve a public OCI image tag to a stable digest. Add this workflow to a
+# consumer repository and replace your-org with the platform owner.
+name: Check Base Image Digest
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - id: upstream
+        uses: your-org/docker-image-lifecycle@v1
+        with:
+          registry: docker.io
+          repository: library/nginx
+          tag: stable
+      - run: echo "Resolved nginx:stable to ${{ steps.upstream.outputs.digest }}"

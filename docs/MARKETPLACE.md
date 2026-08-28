@@ -1,57 +1,68 @@
-# GitHub Marketplace Metadata
+# GitHub Marketplace Release Guide
 
-## Name
+## Marketplace listing
 
-**Docker Image Lifecycle**
+**Name:** Docker Image Lifecycle
 
-## Short description
+**Short description:**
 
-Secure, reusable GitHub Actions for monitoring, testing, scanning, releasing,
-and publishing Docker images.
+> Resolve OCI image digests and automate secure Docker image lifecycles with GitHub Actions.
 
-## Long description
+**Long description:**
 
-Docker Image Lifecycle provides reusable workflows and composite actions for
-the complete container image lifecycle. Consumer repositories keep a small
-caller workflow and configure behavior with Repository Variables, Secrets,
-and GitHub Environments.
+Docker Image Lifecycle is an OCI-native GitHub Actions platform for
+content-addressed base-image monitoring, reviewable Dockerfile updates,
+multi-platform builds, testing, vulnerability scanning, SPDX SBOM generation,
+keyless image signing, releases, and multi-registry publishing.
 
-The platform monitors upstream base images, creates reviewed Dockerfile update
-pull requests, builds multi-platform images with Docker Buildx, runs
-container tests, lints Dockerfiles, scans vulnerabilities with Trivy,
-generates SPDX SBOMs, emits provenance attestations, creates GitHub Releases,
-and publishes to popular OCI registries.
-
-It supports public and private repositories, open-source projects, and
-enterprise governance models. OIDC and environment approvals help reduce
-long-lived credentials and prevent unattended production publication.
+The root Marketplace Action resolves a tag to a stable image digest. The
+repository also provides reusable workflows for the complete image lifecycle.
 
 ## Categories
 
 - Continuous integration
-- Deployment
 - Security
-- Package management
-- Developer tools
+- Publishing
+- Utilities
 
-## Keywords
+## Search keywords
 
-`docker`, `containers`, `github-actions`, `reusable-workflow`, `devsecops`,
-`docker-buildx`, `sbom`, `trivy`, `hadolint`, `oci`, `ghcr`, `ecr`, `acr`,
-`docker-hub`, `supply-chain-security`
+`docker`, `container`, `oci`, `github-actions`, `dockerfile`, `base-image`,
+`image-monitoring`, `container-security`, `devsecops`, `supply-chain-security`,
+`sbom`, `cosign`, `slsa`, `trivy`, `multi-architecture`, `multi-platform`,
+`container-registry`, `ghcr`, `docker-hub`, `platform-engineering`
 
-## Marketplace checklist
+## Marketplace Action
 
-- Publish a public repository with an OSI-approved license.
-- Add a clear action/workflow entry point and supported inputs.
-- Include security and support documentation.
-- Pin or document third-party action dependencies.
-- Provide screenshots or workflow summary examples only after removing all
-  credentials and private identifiers.
-- Keep Marketplace description aligned with actual supported behavior.
+The root [`action.yml`](../action.yml) is the Marketplace entry point. It
+resolves an OCI tag to an immutable digest and provides `digest`, `resolved`,
+`media_type`, `is_multi_arch`, and `platforms` outputs. The action uses a
+fixed OCI/Docker manifest `Accept` set to preserve multi-architecture index
+digests.
 
-## Branding
+**Branding:** `package` icon, `blue` color.
 
-Use a simple container or pipeline icon, high contrast, accessible alt text,
-and a neutral blue/green palette. Avoid provider-exclusive branding because
-the platform supports multiple OCI registries.
+## Publish checklist
+
+1. Make `yaju-mahida/docker-image-lifecycle` public.
+2. Confirm two-factor authentication is enabled for the publishing account.
+3. Verify `LICENSE` and `NOTICE` are present and identify Apache-2.0.
+4. Ensure `README.md` contains the root-action quick start and reusable
+   workflow onboarding guidance.
+5. Run the `Validate` workflow successfully on the release commit.
+6. Create an annotated `v1.0.0` release tag and GitHub Release.
+7. Create/update the moving `v1` major-version tag to the same release.
+8. In the GitHub Release form, select **Publish this Action to the GitHub
+   Marketplace** and accept the Marketplace Developer Agreement.
+9. Use the listing text above and review the rendered Marketplace page before
+   publishing.
+
+## Versioning policy
+
+The Marketplace Action and reusable workflow contracts follow Semantic
+Versioning. Publish immutable release tags such as `v1.0.0`; keep `v1` as the
+supported compatibility line. Breaking inputs, outputs, security defaults, or
+workflow behavior require `v2`.
+
+Consumer image-release strategies are independent of platform versioning.
+They are configured through `RELEASE_TAG_STRATEGY` in the consumer repository.

@@ -64,7 +64,7 @@ jobs:
     if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -123,16 +123,23 @@ jobs:
           # Conventional Commit classification. Merge commit subjects are
           # included so squash-merged PR titles (the common case) are seen;
           # bodies are also scanned for a "BREAKING CHANGE:" footer.
+          #
+          # Regexes are held in variables: bash's [[ ]] tokenizer mis-parses
+          # an inline regex containing ')' inside a bracket expression.
+          RE_BREAKING='^[a-zA-Z]+(\([^)]*\))?!:'
+          RE_FEAT='^feat(\([^)]*\))?:'
+          RE_PATCH='^(fix|perf|revert)(\([^)]*\))?:'
+
           BUMP="none"
           if [ "$FORCE_BUMP" != "auto" ]; then
             BUMP="$FORCE_BUMP"
           else
             while IFS= read -r subject; do
-              if [[ "$subject" =~ ^[a-zA-Z]+(\([^)]*\))?!: ]]; then
+              if [[ "$subject" =~ $RE_BREAKING ]]; then
                 BUMP="major"; break
-              elif [[ "$subject" =~ ^feat(\([^)]*\))?: ]] && [ "$BUMP" != "major" ]; then
+              elif [[ "$subject" =~ $RE_FEAT ]] && [ "$BUMP" != "major" ]; then
                 BUMP="minor"
-              elif [[ "$subject" =~ ^(fix|perf|revert)(\([^)]*\))?: ]] && [ "$BUMP" = "none" ]; then
+              elif [[ "$subject" =~ $RE_PATCH ]] && [ "$BUMP" = "none" ]; then
                 BUMP="patch"
               fi
             done < <(git log --no-merges --pretty=format:'%s' "$RANGE")
@@ -180,26 +187,72 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Classify each commit exactly once, using the same rules as the
+          # version bump. `git log --grep` is deliberately not used: it
+          # matches anywhere in the commit message, which both misfiles
+          # commits and lists them under several headings at once.
+          : > breaking.txt; : > features.txt; : > fixes.txt
+          : > perf.txt; : > reverts.txt; : > other.txt
+
+          # Regexes are held in variables: bash's [[ ]] tokenizer mis-parses
+          # an inline regex containing ')' inside a bracket expression.
+          RE_BREAKING='^[a-zA-Z]+(\([^)]*\))?!:'
+          RE_FEAT='^feat(\([^)]*\))?:'
+          RE_FIX='^fix(\([^)]*\))?:'
+          RE_PERF='^perf(\([^)]*\))?:'
+          RE_REVERT='^revert(\([^)]*\))?:'
+
+          while IFS= read -r -d '' record; do
+            # git separates log entries with a newline, so every record
+            # after the first arrives with a leading newline.
+            record="${record#$'\n'}"
+            [ -n "$record" ] || continue
+            sha="${record%%$'\n'*}"
+            rest="${record#*$'\n'}"
+            subject="${rest%%$'\n'*}"
+            body="${rest#*$'\n'}"
+            line="- ${subject} (${sha})"
+
+            if [[ "$subject" =~ $RE_BREAKING ]] || printf '%s' "$body" | grep -qE '^BREAKING CHANGE:'; then
+              printf '%s\n' "$line" >> breaking.txt
+            elif [[ "$subject" =~ $RE_FEAT ]]; then
+              printf '%s\n' "$line" >> features.txt
+            elif [[ "$subject" =~ $RE_FIX ]]; then
+              printf '%s\n' "$line" >> fixes.txt
+            elif [[ "$subject" =~ $RE_PERF ]]; then
+              printf '%s\n' "$line" >> perf.txt
+            elif [[ "$subject" =~ $RE_REVERT ]]; then
+              printf '%s\n' "$line" >> reverts.txt
+            else
+              printf '%s\n' "$line" >> other.txt
+            fi
+          done < <(git log --no-merges --pretty=format:'%h%n%s%n%b%x00' "$RANGE")
+
           group() {
-            local pattern="$1" heading="$2" body
-            body="$(git log --no-merges --pretty=format:"- %s (%h)" -E --grep="$pattern" "$RANGE" || true)"
-            [ -n "$body" ] && printf '### %s\n\n%s\n\n' "$heading" "$body"
+            local file="$1" heading="$2"
+            if [ -s "$file" ]; then
+              printf '### %s\n\n' "$heading"
+              cat "$file"
+              printf '\n'
+            fi
+            return 0
           }
 
           {
             printf '## %s\n\n' "$NEW_TAG"
-            group '^[a-zA-Z]+(\([^)]*\))?!:|BREAKING CHANGE' '⚠ Breaking Changes'
-            group '^feat(\([^)]*\))?:' 'Features'
-            group '^fix(\([^)]*\))?:' 'Fixes'
-            group '^perf(\([^)]*\))?:' 'Performance'
-            group '^revert(\([^)]*\))?:' 'Reverts'
-            group '^(docs|chore|ci|test|refactor|style|build)(\([^)]*\))?:' 'Other changes'
+            group breaking.txt '⚠ Breaking Changes'
+            group features.txt 'Features'
+            group fixes.txt 'Fixes'
+            group perf.txt 'Performance'
+            group reverts.txt 'Reverts'
+            group other.txt 'Other changes'
             if [ -n "$PREVIOUS_TAG" ]; then
               printf '\n**Full Changelog:** %s/compare/%s...%s\n' \
                 "${{ github.server_url }}/${{ github.repository }}" "$PREVIOUS_TAG" "$NEW_TAG"
             fi
           } > release_notes.md
 
+          rm -f breaking.txt features.txt fixes.txt perf.txt reverts.txt other.txt
           cat release_notes.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create release and move major tag
@@ -261,7 +314,7 @@ jobs:
       # let it merge through the normal review/signature process.
       - name: Open changelog pull request
         if: ${{ steps.version.outputs.should_release == 'true' && !inputs.dry-run }}
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "docs(changelog): add ${{ steps.version.outputs.new_tag }} release notes"

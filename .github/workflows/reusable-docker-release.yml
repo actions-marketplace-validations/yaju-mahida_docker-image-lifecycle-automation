@@ -366,7 +366,7 @@ jobs:
           fetch-depth: 2
 
       - id: load
-        uses: $/.github/actions/load-automation-config
+        uses: yaju-mahida/docker-image-lifecycle/.github/actions/load-automation-config@v1
         with:
           config-path: ${{ inputs.config-path }}
           env-overrides: ${{ inputs.config-env }}
@@ -388,7 +388,7 @@ jobs:
       # Makes `paths_ignore` a real config-driven setting, since (unlike a
       # trigger's static paths-ignore) this evaluates inside the job.
       - id: paths
-        uses: $/.github/actions/check-paths-changed
+        uses: yaju-mahida/docker-image-lifecycle/.github/actions/check-paths-changed@v1
         with:
           patterns: ${{ steps.load.outputs.paths_ignore }}
 
@@ -397,7 +397,7 @@ jobs:
       # release.registries array for any registry type not covered by a
       # variable - see .github/actions/resolve-registries.
       - id: registries
-        uses: $/.github/actions/resolve-registries
+        uses: yaju-mahida/docker-image-lifecycle/.github/actions/resolve-registries@v1
         with:
           image-name: ${{ inputs.var-image-name }}
           publish-ghcr: ${{ inputs.var-publish-ghcr }}
@@ -490,12 +490,12 @@ jobs:
           fetch-depth: 0
 
       - id: extract
-        uses: $/.github/actions/extract-base-image
+        uses: yaju-mahida/docker-image-lifecycle/.github/actions/extract-base-image@v1
         with:
           dockerfile-path: ${{ needs.config.outputs.dockerfile }}
 
       - id: calc
-        uses: $/.github/actions/calculate-next-tag
+        uses: yaju-mahida/docker-image-lifecycle/.github/actions/calculate-next-tag@v1
         with:
           base-tag: ${{ steps.extract.outputs.base_image_version }}
           strategy: ${{ needs.config.outputs.release_tag_strategy }}
@@ -517,7 +517,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -542,7 +542,7 @@ jobs:
           outputs: type=docker,dest=/tmp/candidate-image.tar
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: candidate-image
           path: /tmp/candidate-image.tar
@@ -557,7 +557,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ !inputs.dry-run && needs.config.outputs.test_command != '' }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: candidate-image
           path: /tmp
@@ -585,7 +585,7 @@ jobs:
           dockerfile: ${{ needs.config.outputs.dockerfile }}
           failure-threshold: warning
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: candidate-image
           path: /tmp
@@ -609,7 +609,7 @@ jobs:
           output-file: sbom.spdx.json
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: sbom.spdx.json
@@ -635,13 +635,13 @@ jobs:
           fetch-depth: 0
 
       - name: Download SBOM
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sbom
           path: /tmp/release-sbom
 
       - id: generate-release
-        uses: $/.github/actions/generate-release
+        uses: yaju-mahida/docker-image-lifecycle/.github/actions/generate-release@v1
         with:
           new-tag: ${{ needs.version.outputs.new_git_tag }}
           base-version: ${{ needs.version.outputs.base_image_version }}
@@ -663,7 +663,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
 
       - name: Resolve registry credentials
@@ -711,7 +711,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to registry
-        uses: $/.github/actions/registry-login
+        uses: yaju-mahida/docker-image-lifecycle/.github/actions/registry-login@v1
         with:
           registry-type: ${{ matrix.target.type }}
           registry: ${{ matrix.target.registry || '' }}
@@ -743,7 +743,7 @@ jobs:
 
       - name: Install Cosign
         if: ${{ needs.config.outputs.sign_images == 'true' }}
-        uses: sigstore/cosign-installer@v3.10.0
+        uses: sigstore/cosign-installer@v4
 
       - name: Keylessly sign published image
         if: ${{ needs.config.outputs.sign_images == 'true' }}

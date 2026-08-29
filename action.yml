@@ -48,14 +48,17 @@ runs:
   using: composite
   steps:
     - id: resolve
-      uses: yaju-mahida/docker-image-lifecycle/.github/actions/resolve-image-digest@v1
-      with:
-        registry: ${{ inputs.registry }}
-        repository: ${{ inputs.repository }}
-        tag: ${{ inputs.tag }}
-        username: ${{ inputs.username }}
-        password: ${{ inputs.password }}
-        verify-stability: ${{ inputs.verify-stability }}
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        REPOSITORY: ${{ inputs.repository }}
+        TAG: ${{ inputs.tag }}
+        REGISTRY_USERNAME: ${{ inputs.username }}
+        REGISTRY_PASSWORD: ${{ inputs.password }}
+        VERIFY_STABILITY: ${{ inputs.verify-stability }}
+      # Runs the shared implementation from this action's own checkout, so
+      # the action never depends on a published tag of its own repository.
+      run: bash "${{ github.action_path }}/scripts/resolve-image-digest.sh"
 
 branding:
   icon: package

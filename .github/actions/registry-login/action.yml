@@ -60,7 +60,7 @@ runs:
 
     - name: Configure AWS credentials (OIDC)
       if: inputs.registry-type == 'ecr'
-      uses: aws-actions/configure-aws-credentials@v4
+      uses: aws-actions/configure-aws-credentials@v6
       with:
         aws-region: ${{ inputs.aws-region }}
         role-to-assume: ${{ inputs.aws-role-arn }}

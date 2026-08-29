@@ -10,11 +10,16 @@ upstream repository.
 public OCI image to an immutable digest. It is the smallest useful adoption
 path and works independently of the full lifecycle workflows.
 
-## Full lifecycle consumer
+## Progressive lifecycle templates
 
-[`templates/consumer-workflow.yml`](../templates/consumer-workflow.yml)
-provides a consumer-owned schedule and release-branch trigger for the
-reusable monitor and release workflows.
+Choose one template rather than adapting a single large workflow:
+
+- [`templates/minimal-monitor.yml`](../templates/minimal-monitor.yml) for
+  digest-first monitoring and reviewable update pull requests.
+- [`templates/secure-release.yml`](../templates/secure-release.yml) for a
+  multi-platform, signed release to GHCR.
+- [`templates/enterprise-release.yml`](../templates/enterprise-release.yml)
+  for environment-gated, multi-registry releases with OIDC support.
 
 ## Advanced configuration
 
@@ -25,5 +30,6 @@ instances or reviewable nested configuration.
 ## Registry targets
 
 Use the corresponding `PUBLISH_<TYPE>` and `<TYPE>_IMAGE` Repository
-Variables documented in [Registry Publishing](REGISTRIES.md). Credentials
-belong in GitHub Secrets or protected Environments, never in examples.
+Variables are documented in [Lifecycle Policy and Configuration](CONFIGURATION.md).
+Credentials belong in GitHub Secrets or protected Environments, never in
+examples.

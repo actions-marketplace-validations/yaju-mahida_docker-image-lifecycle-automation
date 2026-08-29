@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for improving Docker Image Lifecycle.
+Thank you for improving Docker Image Lifecycle Automation.
 
 ## Development process
 

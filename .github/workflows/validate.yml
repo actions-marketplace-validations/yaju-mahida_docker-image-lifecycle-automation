@@ -37,6 +37,54 @@ jobs:
           grep -q '^description:' action.yml
           grep -q '^runs:' action.yml
           grep -q '^branding:' action.yml
+      - name: Validate hybrid distribution contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          import re
+          import yaml
+
+          repository = 'yaju-mahida/docker-image-lifecycle'
+          workflow_inputs = {}
+          for workflow_path in Path('.github/workflows').glob('reusable-*.yml'):
+              workflow = yaml.safe_load(workflow_path.read_text(encoding='utf-8'))
+              triggers = workflow.get('on', workflow.get(True, {}))
+              workflow_inputs[workflow_path.name] = set(
+                  triggers['workflow_call'].get('inputs', {})
+              )
+
+          for template_path in Path('templates').glob('*.yml'):
+              template = yaml.safe_load(template_path.read_text(encoding='utf-8'))
+              for job_name, job in template.get('jobs', {}).items():
+                  reference = job.get('uses', '')
+                  match = re.fullmatch(
+                      rf'{re.escape(repository)}/.github/workflows/(reusable-[\w-]+\.yml)@v1',
+                      reference,
+                  )
+                  if not match:
+                      continue
+                  workflow_name = match.group(1)
+                  unsupported = set(job.get('with', {})) - workflow_inputs[workflow_name]
+                  if unsupported:
+                      raise SystemExit(
+                          f'{template_path}:{job_name} passes unsupported inputs to '
+                          f'{workflow_name}: {sorted(unsupported)}'
+                      )
+                  print(f'Validated {template_path}:{job_name} -> {workflow_name}')
+
+          for action_path in Path('.github/actions').glob('*/action.yml'):
+              action = yaml.safe_load(action_path.read_text(encoding='utf-8'))
+              if action.get('runs', {}).get('using') != 'composite':
+                  raise SystemExit(f'{action_path} must be a composite action')
+              print(f'Validated composite action {action_path}')
+          PYEOF
+      - name: Validate shared scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find scripts -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
 
   smoke-test-root-action:
     name: Resolve Public OCI Digest

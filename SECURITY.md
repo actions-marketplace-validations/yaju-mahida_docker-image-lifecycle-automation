@@ -18,12 +18,28 @@ promotion controls.
 - BuildKit provenance and SBOM attestations
 - Immutable release tags and digest references; mutable aliases are opt-in
 - Optional keyless Cosign signing of published image digests with GitHub OIDC
-- Pinned third-party action versions in production
+- Versioned third-party action dependencies; full commit-SHA pinning is
+  recommended for high-assurance environments
 - Pull-request review before monitored base-image changes release
 
-Image signing is recommended for production deployments. Integrators should
-add a keyless signing step using an approved identity and transparency-log
-policy; signing is intentionally governed by the consumer's trust model.
+Image signing is recommended for production deployments. The secure and
+enterprise templates enable keyless signing by default. Integrators must
+define an approved issuer, certificate identity, and transparency-log policy
+for verification; signing is intentionally governed by the adopting
+repository's trust model.
+
+## Trust boundaries
+
+- A digest identifies exact registry content, but does not by itself establish
+  who published it. Verify provenance and signatures before production
+  promotion where your policy requires it.
+- `latest`, `stable`, and upstream tags are mutable aliases. Deploy immutable
+  digests or immutable release identifiers instead.
+- The platform produces SBOM and BuildKit provenance attestations during
+  secure releases. Verification policy is repository-owned and should be
+  enforced before deployment.
+- Keep upstream read credentials read-only and separate from registry publish
+  credentials.
 
 ## Secret handling
 

@@ -1,8 +1,7 @@
-name: 'Docker Image Lifecycle'
+name: 'Docker Image Lifecycle Automation'
 description: >
-  Resolve an OCI image tag to its immutable manifest digest. Use it as a
-  digest-first building block for base-image monitoring, policy decisions,
-  and secure container-image releases across OCI-compatible registries.
+  Resolve immutable OCI image digests for secure base-image monitoring and
+  reviewed Docker image updates.
 
 inputs:
   registry:

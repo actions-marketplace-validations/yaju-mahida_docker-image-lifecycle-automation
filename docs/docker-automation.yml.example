@@ -22,7 +22,7 @@
 # .github/actions/load-automation-config/action.yml). Note that the
 # monitoring schedule (cron/day/time/timezone) is NEVER configured here -
 # it lives in the consumer's own workflow file - see
-# docs/consumer-workflow-example.yml.
+# templates/enterprise-release.yml.
 
 monitor:
   enabled: true

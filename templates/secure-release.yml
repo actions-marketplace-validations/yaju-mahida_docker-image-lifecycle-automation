@@ -1,0 +1,52 @@
+# Copy to .github/workflows/image-lifecycle.yml after adopting monitoring.
+# The release follows a reviewed merge to main and is protected by the
+# GitHub Environment named in DEPLOYMENT_ENVIRONMENT.
+name: Secure Container Release Lifecycle
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Compute decisions without creating PRs, releases, or published images'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+  id-token: write
+
+jobs:
+  monitor:
+    if: ${{ github.event_name != 'push' }}
+    uses: yaju-mahida/docker-image-lifecycle/.github/workflows/reusable-base-image-monitor.yml@v1
+    with:
+      dockerfile-path: ${{ vars.DOCKERFILE_PATH || 'Dockerfile' }}
+      update-policy: ${{ vars.BASE_IMAGE_UPDATE_POLICY || 'DIGEST_AND_VERSION' }}
+      update-strategy: ${{ vars.BASE_IMAGE_UPDATE_STRATEGY || 'patch' }}
+      pr-reviewers: ${{ vars.REPOSITORY_REVIEWERS }}
+      dry-run: ${{ inputs.dry-run || false }}
+    secrets: inherit
+
+  release:
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    uses: yaju-mahida/docker-image-lifecycle/.github/workflows/reusable-docker-release.yml@v1
+    with:
+      var-dockerfile: ${{ vars.DOCKERFILE_PATH }}
+      var-build-context: ${{ vars.BUILD_CONTEXT }}
+      var-platforms: ${{ vars.BUILD_PLATFORMS }}
+      var-test-command: ${{ vars.TEST_COMMAND }}
+      var-environment: ${{ vars.DEPLOYMENT_ENVIRONMENT }}
+      var-scan-severity-threshold: ${{ vars.SCAN_SEVERITY_THRESHOLD }}
+      var-release-tag-strategy: ${{ vars.RELEASE_TAG_STRATEGY }}
+      var-release-prefix: ${{ vars.RELEASE_PREFIX }}
+      var-sign-images: ${{ vars.SIGN_IMAGES || 'true' }}
+      var-publish-ghcr: ${{ vars.PUBLISH_GHCR }}
+      var-ghcr-image: ${{ vars.GHCR_IMAGE }}
+      dry-run: ${{ inputs.dry-run || false }}
+    secrets: inherit

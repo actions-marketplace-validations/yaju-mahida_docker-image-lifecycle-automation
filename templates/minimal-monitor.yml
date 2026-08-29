@@ -1,0 +1,29 @@
+# Copy to .github/workflows/image-lifecycle.yml in an adopting repository.
+# This is the five-minute adoption path: it monitors the Dockerfile's
+# upstream image, produces evidence, and opens a reviewable update PR.
+name: Monitor Upstream Image
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Report the update decision without opening a pull request'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  monitor:
+    uses: yaju-mahida/docker-image-lifecycle/.github/workflows/reusable-base-image-monitor.yml@v1
+    with:
+      dockerfile-path: ${{ vars.DOCKERFILE_PATH || 'Dockerfile' }}
+      update-policy: ${{ vars.BASE_IMAGE_UPDATE_POLICY || 'DIGEST_AND_VERSION' }}
+      update-strategy: ${{ vars.BASE_IMAGE_UPDATE_STRATEGY || 'patch' }}
+      pr-reviewers: ${{ vars.REPOSITORY_REVIEWERS }}
+      dry-run: ${{ inputs.dry-run || false }}
+    secrets: inherit

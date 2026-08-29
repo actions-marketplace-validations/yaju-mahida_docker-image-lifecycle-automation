@@ -1,8 +1,27 @@
-# Configuration Guide
+# Lifecycle Policy and Configuration Guide
 
 Repository Variables are strings. Boolean values must be written as the
 literal string `true` or `false`. Empty variables fall back to the optional
 configuration file and then to platform defaults.
+
+## Naming and configuration model
+
+Variables describe repository-owned lifecycle policy; secrets provide
+credentials; workflow inputs provide per-run overrides. Do not store
+credentials in variables or the optional configuration file.
+
+| Concern | Naming convention | Examples |
+|---|---|---|
+| Upstream monitoring | `BASE_IMAGE_*` | `BASE_IMAGE_UPDATE_POLICY`, `BASE_IMAGE_UPDATE_STRATEGY` |
+| Build | `BUILD_*` | `BUILD_CONTEXT`, `BUILD_PLATFORMS` |
+| Verification | `TEST_*`, `SCAN_*` | `TEST_COMMAND`, `SCAN_SEVERITY_THRESHOLD` |
+| Release identity | `RELEASE_*` | `RELEASE_TAG_STRATEGY`, `RELEASE_SEMVER_BUMP` |
+| Publication | `PUBLISH_*` | `PUBLISH_GHCR`, `PUBLISH_UPSTREAM_TAG_ALIAS` |
+| Security | `SIGN_*` | `SIGN_IMAGES` |
+
+For v1 compatibility, existing variable names remain authoritative. Future
+prefix consolidation must be introduced as backward-compatible aliases, not
+as a silent rename.
 
 ## Monitoring variables
 
@@ -138,3 +157,10 @@ not sufficient.
 Use `.github/docker-automation.yml` only when you need nested, reviewable
 configuration or multiple instances of the same registry type. See
 [`docker-automation.yml.example`](docker-automation.yml.example).
+
+## Environment guidance
+
+Use a GitHub Environment for every production publication target. Store
+production registry credentials as Environment secrets, require reviewers on
+the environment, and restrict access to protected release branches. For cloud
+registries, prefer OIDC to long-lived access keys.

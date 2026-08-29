@@ -1,18 +1,30 @@
-# Docker Image Lifecycle
+# Docker Image Lifecycle Automation
 
-[![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-Docker%20Image%20Lifecycle-blue?logo=github)](https://github.com/marketplace)
+[![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-Docker%20Image%20Lifecycle%20Automation-blue?logo=github)](https://github.com/marketplace)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![OCI](https://img.shields.io/badge/OCI-compatible-2496ED?logo=docker&logoColor=white)](https://opencontainers.org/)
 
-Automate the secure container image lifecycle with GitHub Actions: detect
-base-image changes by digest, create reviewable updates, build and test
-multi-platform images, scan vulnerabilities, generate SBOMs, sign published
-digests, create releases, and publish to OCI registries.
+Detect upstream container-image drift, create reviewed Dockerfile updates,
+and release trusted OCI images with GitHub Actions. Docker Image Lifecycle
+Automation uses immutable manifest digests to detect tag moves and same-tag
+rebuilds, then provides a governed path through build, test, scan, SBOM,
+provenance, signing, release, and multi-registry distribution.
 
-## Marketplace Action and lifecycle workflows
+> **Most tools detect a changed tag. This platform detects a changed image.**
+
+## Start at the right level
+
+Choose the smallest adoption path that solves your problem:
+
+| Goal | Start here | Time to first result |
+|---|---|---:|
+| Resolve and pin an OCI image digest | [Digest monitor example](examples/digest-monitor.yml) | 1 minute |
+| Detect base-image drift and open a reviewable PR | [Minimal monitor template](templates/minimal-monitor.yml) | 5 minutes |
+| Build, verify, sign, release, and publish images | [Secure lifecycle template](templates/secure-release.yml) | 10 minutes |
+| Apply environment gates and organization policy | [Enterprise lifecycle template](templates/enterprise-release.yml) | 15 minutes |
 
 The root Marketplace Action resolves any OCI image tag to its immutable
-manifest digest. Use it for focused digest monitoring:
+manifest digest:
 
 ```yaml
 - id: upstream
@@ -25,58 +37,75 @@ manifest digest. Use it for focused digest monitoring:
 - run: echo "${{ steps.upstream.outputs.digest }}"
 ```
 
-For the complete lifecycle, copy
-[`templates/consumer-workflow.yml`](templates/consumer-workflow.yml) into a
-consumer repository. It calls the reusable monitoring and release workflows.
+For the complete lifecycle, copy a template into the adopting repository.
+The templates call the reusable monitoring and release workflows while the
+adopting repository retains its own schedule, approvals, credentials, and
+release policy.
 
 ```text
 Scheduled monitor
         ↓
-OCI digest and version detection
+OCI digest and version resolution
         ↓
 Reviewable Dockerfile update PR
         ↓
 Approval and merge
         ↓
-Build → test → scan → SBOM → publish → sign → GitHub Release
+Build → test → scan → SBOM/provenance → publish → sign → GitHub Release
 ```
 
-## Core capabilities
+## Why Docker Image Lifecycle Automation
 
-- OCI-native, digest-first base image monitoring for public and private
-  Docker Hub, GHCR, ACR, ECR, Quay, Harbor, Artifactory, GitLab, OCIR, and
-  generic OCI registries
-- Dockerfile `image:tag@sha256:...` pinning and same-tag rebuild detection
-- Configurable update policies and patch/minor/major version constraints
-- Multi-platform Docker Buildx image builds and smoke testing
-- Hadolint, Trivy, SPDX SBOMs, BuildKit provenance, and optional keyless
-  Cosign signing of published image digests
-- Consumer-controlled release identifiers and opt-in mutable upstream aliases
-- Publication to GHCR, Docker Hub, ACR, ECR, Quay, Harbor, Artifactory,
-  GitLab Registry, DigitalOcean, OCIR, and generic OCI registries
-- GitHub Environments, least-privilege permissions, OIDC, and reviewed PRs
+| Lifecycle problem | Platform capability |
+|---|---|
+| An upstream publisher rebuilds an unchanged tag | Digest-first detection catches the content change |
+| Teams need control before a Dockerfile changes | Evidence-backed, reviewable update PRs |
+| Release pipelines vary by repository | Reusable lifecycle contracts with repository-owned policy |
+| Publishing an image is not sufficient evidence | Trivy, SPDX SBOMs, BuildKit provenance, and optional Cosign signing |
+| Multiple OCI registries increase operational complexity | One registry abstraction for public, private, cloud, and generic OCI registries |
+
+## Architecture
+
+```text
+Adopting repository
+  Dockerfile + lifecycle policy + environment approvals
+                    │
+                    ▼
+Reusable lifecycle workflows
+  Monitor → update PR → build → test → scan → publish → sign → release
+                    │
+                    ▼
+Composite lifecycle actions
+  image reference · digest resolution · policy · version · registry auth
+                    │
+                    ▼
+Shared scripts
+  OCI protocol and deterministic parsing
+```
+
+Read the [architecture guide](docs/ARCHITECTURE.md) for contracts,
+responsibilities, and compatibility guarantees.
 
 ## Quick start
 
-1. Copy [`templates/consumer-workflow.yml`](templates/consumer-workflow.yml)
-   to `.github/workflows/docker-image-lifecycle.yml` in the image repository.
-2. Replace `your-org/docker-image-lifecycle@v1` with the platform reference.
-3. Configure Repository Variables such as `DOCKERFILE_PATH`,
-   `BUILD_PLATFORMS`, `RELEASE_TAG_STRATEGY`, and the selected `PUBLISH_*`
-   registry settings.
-4. Add only the matching registry secrets and create the configured GitHub
-   Environment for approval-gated publication.
-5. Run the caller manually in dry-run mode before enabling scheduled and
-   production releases.
+1. Copy [`templates/minimal-monitor.yml`](templates/minimal-monitor.yml) to
+   `.github/workflows/image-lifecycle.yml` in the image repository.
+2. Replace `your-org/docker-image-lifecycle@v1` with
+   `yaju-mahida/docker-image-lifecycle@v1`.
+3. Set `DOCKERFILE_PATH`, `BASE_IMAGE_UPDATE_POLICY`, and optional reviewer
+   variables.
+4. Run the workflow manually in dry-run mode, then enable its schedule.
+5. Move to [`templates/secure-release.yml`](templates/secure-release.yml)
+   when you are ready to publish signed, verified images.
 
 ## Supported integration models
 
 | Need | Use |
 |---|---|
 | Resolve an OCI tag to a digest | Root Marketplace Action (`yaju-mahida/docker-image-lifecycle@v1`) |
-| Monitor a Dockerfile and create update PRs | `reusable-base-image-monitor.yml` |
-| Build, secure, release, and publish an image | `reusable-docker-release.yml` |
-| Deploy a standard consumer configuration | `templates/consumer-workflow.yml` |
+| Monitor an upstream image and create update PRs | `reusable-base-image-monitor.yml` |
+| Build, verify, release, and publish an image | `reusable-docker-release.yml` |
+| Adopt a lifecycle in stages | `templates/minimal-monitor.yml`, `templates/secure-release.yml`, or `templates/enterprise-release.yml` |
 | Configure multiple/custom registries | `templates/docker-automation.yml` |
 
 ## Documentation
@@ -84,21 +113,23 @@ Build → test → scan → SBOM → publish → sign → GitHub Release
 | Topic | Guide |
 |---|---|
 | Install and private-repository access | [Installation](docs/INSTALLATION.md) |
-| Consumer onboarding | [Consumer Guide](docs/CONSUMER_GUIDE.md) |
-| Variables, policies, and release strategies | [Configuration](docs/CONFIGURATION.md) |
+| Onboarding by adoption path | [Consumer Guide](docs/CONSUMER_GUIDE.md) |
+| Lifecycle variables, policies, and release identifiers | [Configuration](docs/CONFIGURATION.md) |
 | Digest-first monitoring | [Monitoring](docs/MONITORING.md) |
 | Registry publishing | [Registries](docs/REGISTRIES.md) |
 | Architecture | [Architecture](docs/ARCHITECTURE.md) |
 | Public examples | [Examples](docs/EXAMPLES.md) |
-| Marketplace release information | [Marketplace](docs/MARKETPLACE.md) |
+| Marketplace listing and positioning | [Marketplace](docs/MARKETPLACE.md) |
+| Product language and terminology | [Terminology](docs/TERMINOLOGY.md) |
+| Planned lifecycle capabilities | [Roadmap](docs/ROADMAP.md) |
 | Security policy | [Security](SECURITY.md) |
 
-## Security
+## Secure by default
 
-Use immutable image digests or release tags for deployment. Mutable aliases
-such as `latest`, `stable`, and upstream tags are opt-in convenience labels,
-not secure deployment inputs. Set `SIGN_IMAGES=true` to keylessly sign every
-published image digest using Cosign and GitHub OIDC.
+Use immutable image digests or immutable release identifiers for deployment.
+Mutable aliases such as `latest`, `stable`, and upstream tags are opt-in
+convenience labels, never secure deployment inputs. Set `SIGN_IMAGES=true`
+to keylessly sign every published image digest using Cosign and GitHub OIDC.
 
 See [SECURITY.md](SECURITY.md) for reporting and responsibility guidance.
 

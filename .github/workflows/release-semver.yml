@@ -1,0 +1,278 @@
+name: Release (SemVer)
+
+# PLATFORM RELEASE WORKFLOW
+#
+# This releases the docker-image-lifecycle PLATFORM itself (the Marketplace
+# Action, reusable workflows, and composite actions) - it is unrelated to
+# the RELEASE_TAG_STRATEGY consumer repositories choose for their own image
+# releases (see .github/actions/calculate-next-tag).
+#
+# On every push to `main`, this workflow:
+#   1. Finds the latest vX.Y.Z tag. If none exists yet, the very first
+#      published version is always v1.0.0 (never v0.x.y), regardless of
+#      commit classification.
+#   2. Otherwise classifies every commit since that tag using Conventional
+#      Commits:
+#        "type!:" or a "BREAKING CHANGE:" footer -> major
+#        "feat:"                                -> minor
+#        "fix:" / "perf:" / "revert:"            -> patch
+#      Any other commit type (docs, chore, ci, test, refactor, style,
+#      build) does not trigger a release on its own.
+#   3. Skips the release entirely when no commit qualifies, or when the
+#      latest commit message contains "[skip release]".
+#   4. Creates the release via the GitHub REST/Releases API rather than a
+#      local `git push` of a new tag - the tag is attached to a commit SHA
+#      that already passed branch protection (PR review + verified
+#      signature) when it merged to `main`, so API-created tags do not
+#      themselves need to be signed to satisfy repository rulesets.
+#   5. Moves the moving major-version tag (e.g. `v1`) to the new release,
+#      which is what consumers should pin `uses: owner/repo@v1` to.
+#   6. Prepends the release notes to CHANGELOG.md and opens a pull request
+#      with that change via peter-evans/create-pull-request, since `main`
+#      is protected and this workflow's token cannot push to it directly.
+#
+# Manual runs can force a specific bump (or a no-op dry run) with the
+# `bump` input below.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Force a bump instead of classifying commit messages'
+        type: choice
+        options: ['auto', 'patch', 'minor', 'major']
+        default: 'auto'
+      dry-run:
+        description: 'Compute the next version and print it without releasing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-semver-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Calculate Version and Publish Release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next SemVer release
+        id: version
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FORCE_BUMP: ${{ inputs.bump || 'auto' }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          LAST_TAG="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1 || true)"
+          if [ -n "$LAST_TAG" ]; then
+            RANGE="${LAST_TAG}..HEAD"
+            [[ "$LAST_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || fail "Latest tag '$LAST_TAG' is not valid SemVer."
+            MAJOR="${BASH_REMATCH[1]}"; MINOR="${BASH_REMATCH[2]}"; PATCH="${BASH_REMATCH[3]}"
+          else
+            RANGE="HEAD"
+            MAJOR=0; MINOR=0; PATCH=0
+          fi
+
+          COMMIT_COUNT="$(git rev-list --count "$RANGE" 2>/dev/null || echo 0)"
+          if [ "$COMMIT_COUNT" -eq 0 ] && [ -n "$LAST_TAG" ]; then
+            echo "::notice::No commits since $LAST_TAG; nothing to release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # No prior release exists: the platform's first published version
+          # is always v1.0.0, regardless of commit classification, so
+          # consumers never see a v0.x.y release.
+          if [ -z "$LAST_TAG" ]; then
+            NEW_TAG="v1.0.0"
+            MAJOR_TAG="v1"
+
+            if gh release view "$NEW_TAG" >/dev/null 2>&1; then
+              fail "Release $NEW_TAG already exists."
+            fi
+
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "bump=initial" >> "$GITHUB_OUTPUT"
+            echo "previous_tag=" >> "$GITHUB_OUTPUT"
+            echo "new_tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+            echo "major_tag=$MAJOR_TAG" >> "$GITHUB_OUTPUT"
+            echo "range=$RANGE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Conventional Commit classification. Merge commit subjects are
+          # included so squash-merged PR titles (the common case) are seen;
+          # bodies are also scanned for a "BREAKING CHANGE:" footer.
+          BUMP="none"
+          if [ "$FORCE_BUMP" != "auto" ]; then
+            BUMP="$FORCE_BUMP"
+          else
+            while IFS= read -r subject; do
+              if [[ "$subject" =~ ^[a-zA-Z]+(\([^)]*\))?!: ]]; then
+                BUMP="major"; break
+              elif [[ "$subject" =~ ^feat(\([^)]*\))?: ]] && [ "$BUMP" != "major" ]; then
+                BUMP="minor"
+              elif [[ "$subject" =~ ^(fix|perf|revert)(\([^)]*\))?: ]] && [ "$BUMP" = "none" ]; then
+                BUMP="patch"
+              fi
+            done < <(git log --no-merges --pretty=format:'%s' "$RANGE")
+
+            if git log --pretty=format:'%B' "$RANGE" | grep -qE '^BREAKING CHANGE:'; then
+              BUMP="major"
+            fi
+          fi
+
+          if [ "$BUMP" = "none" ]; then
+            echo "::notice::No feat/fix/perf/revert/breaking commits since ${LAST_TAG:-the initial commit}; skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+            *) fail "Unsupported bump '$BUMP'." ;;
+          esac
+
+          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          MAJOR_TAG="v${MAJOR}"
+
+          if gh release view "$NEW_TAG" >/dev/null 2>&1; then
+            fail "Release $NEW_TAG already exists."
+          fi
+
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "previous_tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+          echo "new_tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+          echo "major_tag=$MAJOR_TAG" >> "$GITHUB_OUTPUT"
+          echo "range=$RANGE" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        id: notes
+        if: ${{ steps.version.outputs.should_release == 'true' }}
+        shell: bash
+        env:
+          RANGE: ${{ steps.version.outputs.range }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+          NEW_TAG: ${{ steps.version.outputs.new_tag }}
+        run: |
+          set -euo pipefail
+
+          group() {
+            local pattern="$1" heading="$2" body
+            body="$(git log --no-merges --pretty=format:"- %s (%h)" -E --grep="$pattern" "$RANGE" || true)"
+            [ -n "$body" ] && printf '### %s\n\n%s\n\n' "$heading" "$body"
+          }
+
+          {
+            printf '## %s\n\n' "$NEW_TAG"
+            group '^[a-zA-Z]+(\([^)]*\))?!:|BREAKING CHANGE' '⚠ Breaking Changes'
+            group '^feat(\([^)]*\))?:' 'Features'
+            group '^fix(\([^)]*\))?:' 'Fixes'
+            group '^perf(\([^)]*\))?:' 'Performance'
+            group '^revert(\([^)]*\))?:' 'Reverts'
+            group '^(docs|chore|ci|test|refactor|style|build)(\([^)]*\))?:' 'Other changes'
+            if [ -n "$PREVIOUS_TAG" ]; then
+              printf '\n**Full Changelog:** %s/compare/%s...%s\n' \
+                "${{ github.server_url }}/${{ github.repository }}" "$PREVIOUS_TAG" "$NEW_TAG"
+            fi
+          } > release_notes.md
+
+          cat release_notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create release and move major tag
+        if: ${{ steps.version.outputs.should_release == 'true' && !inputs.dry-run }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEW_TAG: ${{ steps.version.outputs.new_tag }}
+          MAJOR_TAG: ${{ steps.version.outputs.major_tag }}
+        run: |
+          set -euo pipefail
+
+          # Created via the Releases API against an already-merged (and
+          # already branch-protection-verified) commit SHA, so this does
+          # not require a locally signed `git push` of the new tag.
+          gh release create "$NEW_TAG" \
+            --title "$NEW_TAG" \
+            --notes-file release_notes.md \
+            --target "${{ github.sha }}" \
+            --latest
+
+          REPO="${{ github.repository }}"
+          if gh api "repos/${REPO}/git/refs/tags/${MAJOR_TAG}" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/${REPO}/git/refs/tags/${MAJOR_TAG}" \
+              -f sha="${{ github.sha }}" -F force=true
+          else
+            gh api --method POST "repos/${REPO}/git/refs" \
+              -f ref="refs/tags/${MAJOR_TAG}" -f sha="${{ github.sha }}"
+          fi
+
+          echo "### Released ${NEW_TAG} (moved ${MAJOR_TAG})" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dry-run summary
+        if: ${{ steps.version.outputs.should_release == 'true' && inputs.dry-run }}
+        shell: bash
+        run: |
+          echo "::notice::Dry run - would release ${{ steps.version.outputs.new_tag }} (bump: ${{ steps.version.outputs.bump }}) and move ${{ steps.version.outputs.major_tag }}."
+
+      - name: Update CHANGELOG.md
+        if: ${{ steps.version.outputs.should_release == 'true' && !inputs.dry-run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          touch CHANGELOG.md
+          if [ ! -s CHANGELOG.md ]; then
+            printf '# Changelog\n\n' > CHANGELOG.md
+          fi
+          {
+            head -n 2 CHANGELOG.md
+            echo
+            cat release_notes.md
+            echo
+            tail -n +3 CHANGELOG.md
+          } > CHANGELOG.md.tmp
+          mv CHANGELOG.md.tmp CHANGELOG.md
+
+      # `main` is protected (PR-only, verified signatures), so this token
+      # cannot push the changelog update directly - open a PR instead and
+      # let it merge through the normal review/signature process.
+      - name: Open changelog pull request
+        if: ${{ steps.version.outputs.should_release == 'true' && !inputs.dry-run }}
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "docs(changelog): add ${{ steps.version.outputs.new_tag }} release notes"
+          branch: "automation/changelog-${{ steps.version.outputs.new_tag }}"
+          delete-branch: true
+          title: "docs(changelog): ${{ steps.version.outputs.new_tag }} release notes"
+          body: |
+            Automated changelog update for release
+            [`${{ steps.version.outputs.new_tag }}`](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.version.outputs.new_tag }}).
+
+            This PR only updates `CHANGELOG.md`; the release itself was
+            already published by the `release-semver` workflow.
+          labels: documentation,automated
+          add-paths: CHANGELOG.md

@@ -1,0 +1,18 @@
+action: calculate-next-tag
+history:
+  tags:
+    - wordpress.1
+    - wordpress.2
+inputs:
+  BASE_TAG: php8.4-apache
+  STRATEGY: PREFIX_INCREMENT
+  RELEASE_PREFIX: wordpress
+  INCREMENT_BASENAME: release
+  SEMVER_INITIAL: v1.0.0
+  SEMVER_BUMP: patch
+  IMAGE_DIGEST: ""
+expected:
+  exit_code: 0
+  outputs:
+    new_git_tag: wordpress.3
+    upstream_tag_alias: php8.4-apache

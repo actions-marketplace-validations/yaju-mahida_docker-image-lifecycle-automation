@@ -1,0 +1,8 @@
+action: extract-base-image
+inputs:
+  DOCKERFILE: Dockerfile
+  STAGE_INDEX: 1
+expected:
+  exit_code: 1
+  stdout_contains:
+    - build-arg driven

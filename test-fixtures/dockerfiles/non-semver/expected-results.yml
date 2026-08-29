@@ -1,0 +1,9 @@
+action: extract-base-image
+inputs:
+  DOCKERFILE: Dockerfile
+  STAGE_INDEX: 1
+expected:
+  exit_code: 0
+  outputs:
+    repository: library/wordpress
+    base_image_version: php8.4-apache

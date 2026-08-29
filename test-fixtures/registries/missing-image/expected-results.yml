@@ -1,0 +1,38 @@
+action: resolve-registries
+inputs:
+  PUBLISH_GHCR: "true"
+  GHCR_IMAGE: ""
+  PUBLISH_DOCKERHUB: ""
+  DOCKERHUB_IMAGE: ""
+  PUBLISH_ACR: ""
+  ACR_IMAGE: ""
+  PUBLISH_ECR: ""
+  ECR_IMAGE: ""
+  AWS_REGION: ""
+  PUBLISH_QUAY: ""
+  QUAY_IMAGE: ""
+  PUBLISH_HARBOR: ""
+  HARBOR_IMAGE: ""
+  HARBOR_REGISTRY_HOST: ""
+  PUBLISH_ARTIFACTORY: ""
+  ARTIFACTORY_IMAGE: ""
+  ARTIFACTORY_REGISTRY_HOST: ""
+  PUBLISH_GITLAB: ""
+  GITLAB_IMAGE: ""
+  GITLAB_REGISTRY_HOST: ""
+  PUBLISH_DIGITALOCEAN: ""
+  DIGITALOCEAN_IMAGE: ""
+  PUBLISH_OCIR: ""
+  OCIR_IMAGE: ""
+  OCIR_REGISTRY_HOST: ""
+  PUBLISH_PRIVATE: ""
+  PRIVATE_IMAGE: ""
+  PRIVATE_REGISTRY_HOST: ""
+  IMAGE_NAME: ""
+  CONFIG_REGISTRIES_JSON: "[]"
+expected:
+  exit_code: 0
+  outputs:
+    registries_json: "[]"
+  stdout_contains:
+    - no image was configured

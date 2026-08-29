@@ -1,0 +1,16 @@
+action: calculate-next-tag
+history:
+  tags:
+    - php8.4-apache
+inputs:
+  BASE_TAG: php8.4-apache
+  STRATEGY: UPSTREAM_TAG
+  RELEASE_PREFIX: ""
+  INCREMENT_BASENAME: release
+  SEMVER_INITIAL: v1.0.0
+  SEMVER_BUMP: patch
+  IMAGE_DIGEST: ""
+expected:
+  exit_code: 1
+  stdout_contains:
+    - already a Git release

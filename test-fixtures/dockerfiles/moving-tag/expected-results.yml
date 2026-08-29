@@ -1,0 +1,11 @@
+action: extract-base-image
+inputs:
+  DOCKERFILE: Dockerfile
+  STAGE_INDEX: 1
+expected:
+  exit_code: 0
+  outputs:
+    registry: docker.io
+    repository: library/ubuntu
+    base_image_version: latest
+    is_digest_pinned: "false"

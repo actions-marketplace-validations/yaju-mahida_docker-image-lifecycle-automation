@@ -122,6 +122,7 @@ responsibilities, and compatibility guarantees.
 | Marketplace listing and positioning | [Marketplace](docs/MARKETPLACE.md) |
 | Product language and terminology | [Terminology](docs/TERMINOLOGY.md) |
 | Planned lifecycle capabilities | [Roadmap](docs/ROADMAP.md) |
+| Test fixtures and quality gates | [Testing](docs/TESTING.md) |
 | Security policy | [Security](SECURITY.md) |
 
 ## Secure by default

@@ -1,0 +1,11 @@
+action: extract-base-image
+inputs:
+  DOCKERFILE: Dockerfile
+  STAGE_INDEX: 2
+expected:
+  exit_code: 0
+  outputs:
+    image_reference: alpine:3.20
+    repository: library/alpine
+    base_image_version: "3.20"
+    from_line_number: "5"

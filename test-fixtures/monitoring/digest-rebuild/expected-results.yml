@@ -1,0 +1,21 @@
+action: decide-base-image-update
+inputs:
+  POLICY: DIGEST_AND_VERSION
+  UPDATE_STRATEGY: patch
+  CURRENT_TAG: php8.4-apache
+  CURRENT_DIGEST: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  CURRENT_TAG_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  LATEST_TAG: ""
+  LATEST_TAG_DIGEST: ""
+  CHANGE_TYPE: none
+  VERSION_UPDATE_AVAILABLE: "false"
+  DIGEST_HISTORY: ""
+expected:
+  exit_code: 0
+  outputs:
+    should_update: "true"
+    outcome: UPDATE
+    update_kind: REBUILD
+    target_tag: php8.4-apache
+    target_digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    block_auto_merge: "false"

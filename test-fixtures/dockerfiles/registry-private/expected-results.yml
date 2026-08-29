@@ -1,0 +1,10 @@
+action: extract-base-image
+inputs:
+  DOCKERFILE: Dockerfile
+  STAGE_INDEX: 1
+expected:
+  exit_code: 0
+  outputs:
+    registry: registry.company.test:5000
+    repository: team/app
+    base_image_version: 2026.08.01

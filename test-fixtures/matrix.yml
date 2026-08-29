@@ -1,0 +1,43 @@
+# Test tiers are intentionally declarative. The fixture runner discovers
+# expected-results.yml files; this manifest documents the CI selection model
+# and prevents external-registry checks from becoming a PR dependency.
+tiers:
+  pull-request:
+    suites:
+      - dockerfiles
+      - monitoring
+      - release-tags
+      - registries
+    network: false
+  main:
+    suites:
+      - dockerfiles
+      - monitoring
+      - release-tags
+      - registries
+    network: true
+    checks:
+      - public-oci-smoke
+  nightly:
+    suites:
+      - dockerfiles
+      - monitoring
+      - release-tags
+      - registries
+    network: true
+    checks:
+      - public-oci-smoke
+      - authenticated-registry-integration
+      - protected-publish-integration
+
+registry-support:
+  docker-hub: public-smoke
+  ghcr: protected-integration
+  acr: optional-protected-integration
+  ecr: optional-protected-integration
+  quay: optional-protected-integration
+  harbor: local-or-protected-integration
+  gitlab: optional-protected-integration
+  artifactory: optional-protected-integration
+  ocir: optional-protected-integration
+  generic-oci: local-or-protected-integration

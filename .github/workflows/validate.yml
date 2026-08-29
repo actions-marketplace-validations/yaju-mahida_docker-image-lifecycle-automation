@@ -23,7 +23,13 @@ jobs:
           from pathlib import Path
           import yaml
 
-          paths = [Path('action.yml'), *Path('.github').rglob('*.yml'), *Path('examples').glob('*.yml'), *Path('templates').glob('*.yml')]
+          paths = [
+              Path('action.yml'),
+              *Path('.github').rglob('*.yml'),
+              *Path('examples').glob('*.yml'),
+              *Path('templates').glob('*.yml'),
+              *Path('test-fixtures').rglob('*.yml'),
+          ]
           for path in paths:
               yaml.safe_load(path.read_text(encoding='utf-8'))
               print(f'Validated {path}')
@@ -85,6 +91,9 @@ jobs:
         run: |
           set -euo pipefail
           find scripts -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+      - name: Run deterministic action fixtures
+        shell: bash
+        run: python3 tests/run-fixtures.py
 
   smoke-test-root-action:
     name: Resolve Public OCI Digest
@@ -102,7 +111,12 @@ jobs:
         env:
           RESOLVED: ${{ steps.digest.outputs.resolved }}
           DIGEST: ${{ steps.digest.outputs.digest }}
+          IS_MULTI_ARCH: ${{ steps.digest.outputs.is_multi_arch }}
+          PLATFORMS: ${{ steps.digest.outputs.platforms }}
         run: |
           set -euo pipefail
           test "$RESOLVED" = 'true'
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          test "$IS_MULTI_ARCH" = 'true'
+          grep -qxF 'linux/amd64' <<< "$(tr ',' '\n' <<< "$PLATFORMS")"
+          grep -qxF 'linux/arm64' <<< "$(tr ',' '\n' <<< "$PLATFORMS")"

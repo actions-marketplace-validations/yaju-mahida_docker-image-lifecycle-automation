@@ -1,0 +1,10 @@
+action: extract-base-image
+inputs:
+  DOCKERFILE: Dockerfile
+  STAGE_INDEX: 1
+expected:
+  exit_code: 0
+  outputs:
+    registry: ghcr.io
+    repository: example/app
+    base_image_version: v1

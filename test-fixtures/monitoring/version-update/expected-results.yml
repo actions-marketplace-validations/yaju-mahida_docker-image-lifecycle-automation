@@ -1,0 +1,21 @@
+action: decide-base-image-update
+inputs:
+  POLICY: DIGEST_AND_VERSION
+  UPDATE_STRATEGY: patch
+  CURRENT_TAG: 3.20.1
+  CURRENT_DIGEST: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  CURRENT_TAG_DIGEST: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  LATEST_TAG: 3.20.2
+  LATEST_TAG_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  CHANGE_TYPE: patch
+  VERSION_UPDATE_AVAILABLE: "true"
+  DIGEST_HISTORY: ""
+expected:
+  exit_code: 0
+  outputs:
+    should_update: "true"
+    outcome: UPDATE
+    update_kind: VERSION_UPDATE
+    target_tag: 3.20.2
+    target_digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    block_auto_merge: "false"

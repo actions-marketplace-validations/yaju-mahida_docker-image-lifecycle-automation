@@ -1,0 +1,18 @@
+action: calculate-next-tag
+history:
+  tags:
+    - container-2026.1
+    - container-2026.4
+inputs:
+  BASE_TAG: ""
+  STRATEGY: DATE_INCREMENT
+  RELEASE_PREFIX: container
+  INCREMENT_BASENAME: release
+  SEMVER_INITIAL: v1.0.0
+  SEMVER_BUMP: patch
+  IMAGE_DIGEST: ""
+expected:
+  exit_code: 0
+  outputs:
+    new_git_tag: container-2026.5
+    upstream_tag_alias: ""

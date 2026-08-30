@@ -25,5 +25,9 @@ jobs:
       update-policy: ${{ vars.BASE_IMAGE_UPDATE_POLICY || 'DIGEST_AND_VERSION' }}
       update-strategy: ${{ vars.BASE_IMAGE_UPDATE_STRATEGY || 'patch' }}
       pr-reviewers: ${{ vars.REPOSITORY_REVIEWERS }}
+      pr-assignees: ${{ vars.REPOSITORY_ASSIGNEES }}
+      var-monitor-enabled: ${{ vars.BASE_IMAGE_MONITOR_ENABLED }}
+      var-auto-create-pr: ${{ vars.AUTO_CREATE_UPDATE_PR }}
+      var-auto-merge: ${{ vars.AUTO_MERGE_UPDATE_PR }}
       dry-run: ${{ inputs.dry-run || false }}
     secrets: inherit

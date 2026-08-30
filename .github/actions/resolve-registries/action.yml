@@ -194,6 +194,13 @@ runs:
             entry = {"type": reg_type, "image": image}
             if host_env:
                 entry["registry"] = env(host_env, "")
+            elif reg_type == "acr":
+                # ACR has no dedicated host variable; docker/login-action
+                # requires an explicit registry hostname, so derive it from
+                # the image path itself (e.g. "myregistry.azurecr.io/app"
+                # -> "myregistry.azurecr.io"), which is always fully
+                # qualified for ACR per Azure convention.
+                entry["registry"] = image.split("/", 1)[0]
             entry.update(extra)
             resolved.append(entry)
             resolved_types.add(reg_type)

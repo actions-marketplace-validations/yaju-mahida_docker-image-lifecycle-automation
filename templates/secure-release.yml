@@ -30,6 +30,10 @@ jobs:
       update-policy: ${{ vars.BASE_IMAGE_UPDATE_POLICY || 'DIGEST_AND_VERSION' }}
       update-strategy: ${{ vars.BASE_IMAGE_UPDATE_STRATEGY || 'patch' }}
       pr-reviewers: ${{ vars.REPOSITORY_REVIEWERS }}
+      pr-assignees: ${{ vars.REPOSITORY_ASSIGNEES }}
+      var-monitor-enabled: ${{ vars.BASE_IMAGE_MONITOR_ENABLED }}
+      var-auto-create-pr: ${{ vars.AUTO_CREATE_UPDATE_PR }}
+      var-auto-merge: ${{ vars.AUTO_MERGE_UPDATE_PR }}
       dry-run: ${{ inputs.dry-run || false }}
     secrets: inherit
 
@@ -43,10 +47,40 @@ jobs:
       var-test-command: ${{ vars.TEST_COMMAND }}
       var-environment: ${{ vars.DEPLOYMENT_ENVIRONMENT }}
       var-scan-severity-threshold: ${{ vars.SCAN_SEVERITY_THRESHOLD }}
+      var-paths-ignore: ${{ vars.PATHS_IGNORE }}
+      var-release-branches: ${{ vars.RELEASE_BRANCHES }}
       var-release-tag-strategy: ${{ vars.RELEASE_TAG_STRATEGY }}
       var-release-prefix: ${{ vars.RELEASE_PREFIX }}
+      var-release-increment-basename: ${{ vars.RELEASE_INCREMENT_BASENAME }}
+      var-release-semver-initial: ${{ vars.RELEASE_SEMVER_INITIAL }}
+      var-release-semver-bump: ${{ vars.RELEASE_SEMVER_BUMP }}
+      var-publish-upstream-tag-alias: ${{ vars.PUBLISH_UPSTREAM_TAG_ALIAS }}
       var-sign-images: ${{ vars.SIGN_IMAGES || 'true' }}
+      var-image-name: ${{ vars.IMAGE_NAME }}
       var-publish-ghcr: ${{ vars.PUBLISH_GHCR }}
       var-ghcr-image: ${{ vars.GHCR_IMAGE }}
+      var-publish-dockerhub: ${{ vars.PUBLISH_DOCKERHUB }}
+      var-dockerhub-image: ${{ vars.DOCKERHUB_IMAGE }}
+      var-publish-acr: ${{ vars.PUBLISH_ACR }}
+      var-acr-image: ${{ vars.ACR_IMAGE }}
+      var-publish-quay: ${{ vars.PUBLISH_QUAY }}
+      var-quay-image: ${{ vars.QUAY_IMAGE }}
+      var-publish-harbor: ${{ vars.PUBLISH_HARBOR }}
+      var-harbor-image: ${{ vars.HARBOR_IMAGE }}
+      var-harbor-registry-host: ${{ vars.HARBOR_REGISTRY_HOST }}
+      var-publish-artifactory: ${{ vars.PUBLISH_ARTIFACTORY }}
+      var-artifactory-image: ${{ vars.ARTIFACTORY_IMAGE }}
+      var-artifactory-registry-host: ${{ vars.ARTIFACTORY_REGISTRY_HOST }}
+      var-publish-gitlab: ${{ vars.PUBLISH_GITLAB }}
+      var-gitlab-image: ${{ vars.GITLAB_IMAGE }}
+      var-gitlab-registry-host: ${{ vars.GITLAB_REGISTRY_HOST }}
+      var-publish-digitalocean: ${{ vars.PUBLISH_DIGITALOCEAN }}
+      var-digitalocean-image: ${{ vars.DIGITALOCEAN_IMAGE }}
+      var-publish-ocir: ${{ vars.PUBLISH_OCIR }}
+      var-ocir-image: ${{ vars.OCIR_IMAGE }}
+      var-ocir-registry-host: ${{ vars.OCIR_REGISTRY_HOST }}
+      var-publish-private: ${{ vars.PUBLISH_PRIVATE }}
+      var-private-image: ${{ vars.PRIVATE_IMAGE }}
+      var-private-registry-host: ${{ vars.PRIVATE_REGISTRY_HOST }}
       dry-run: ${{ inputs.dry-run || false }}
     secrets: inherit

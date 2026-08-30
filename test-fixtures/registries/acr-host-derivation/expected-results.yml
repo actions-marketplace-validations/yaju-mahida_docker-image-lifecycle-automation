@@ -1,0 +1,41 @@
+action: resolve-registries
+inputs:
+  PUBLISH_GHCR: ""
+  GHCR_IMAGE: ""
+  PUBLISH_DOCKERHUB: ""
+  DOCKERHUB_IMAGE: ""
+  PUBLISH_ACR: "true"
+  ACR_IMAGE: myregistry.azurecr.io/app
+  PUBLISH_ECR: ""
+  ECR_IMAGE: ""
+  AWS_REGION: ""
+  PUBLISH_QUAY: ""
+  QUAY_IMAGE: ""
+  PUBLISH_HARBOR: ""
+  HARBOR_IMAGE: ""
+  HARBOR_REGISTRY_HOST: ""
+  PUBLISH_ARTIFACTORY: ""
+  ARTIFACTORY_IMAGE: ""
+  ARTIFACTORY_REGISTRY_HOST: ""
+  PUBLISH_GITLAB: ""
+  GITLAB_IMAGE: ""
+  GITLAB_REGISTRY_HOST: ""
+  PUBLISH_DIGITALOCEAN: ""
+  DIGITALOCEAN_IMAGE: ""
+  PUBLISH_OCIR: ""
+  OCIR_IMAGE: ""
+  OCIR_REGISTRY_HOST: ""
+  PUBLISH_PRIVATE: ""
+  PRIVATE_IMAGE: ""
+  PRIVATE_REGISTRY_HOST: ""
+  IMAGE_NAME: ""
+  CONFIG_REGISTRIES_JSON: '[]'
+expected:
+  exit_code: 0
+  outputs:
+    # ACR has no dedicated <TYPE>_REGISTRY_HOST variable (unlike Harbor,
+    # Artifactory, GitLab, OCIR, and Private); resolve-registries must
+    # derive the docker/login-action registry hostname from the leading
+    # path segment of ACR_IMAGE itself so Repository-Variable-driven ACR
+    # publishing authenticates correctly.
+    registries_json: '[{"type": "acr", "image": "myregistry.azurecr.io/app", "registry": "myregistry.azurecr.io"}]'

@@ -138,7 +138,7 @@ provider-specific endpoints.
 |---|---|---|---|
 | GHCR | `PUBLISH_GHCR` | `GHCR_IMAGE` | none |
 | Docker Hub | `PUBLISH_DOCKERHUB` | `DOCKERHUB_IMAGE` | none |
-| ACR | `PUBLISH_ACR` | `ACR_IMAGE` | `ACR_REGISTRY_HOST` if needed |
+| ACR | `PUBLISH_ACR` | `ACR_IMAGE` | none — embed the registry hostname directly in `ACR_IMAGE`, e.g. `myregistry.azurecr.io/app` |
 | ECR | `PUBLISH_ECR` | `ECR_IMAGE` | `AWS_REGION` |
 | Quay | `PUBLISH_QUAY` | `QUAY_IMAGE` | none |
 | Harbor | `PUBLISH_HARBOR` | `HARBOR_IMAGE` | `HARBOR_REGISTRY_HOST` |
@@ -149,8 +149,9 @@ provider-specific endpoints.
 | Generic OCI | `PUBLISH_PRIVATE` | `PRIVATE_IMAGE` | `PRIVATE_REGISTRY_HOST` |
 
 The current reusable workflow accepts the host-specific variables listed in
-its inputs. For ACR, use the image's hostname when the provider default is
-not sufficient.
+its inputs. ACR, Docker Hub, Quay, DigitalOcean, and GHCR have no separate
+host variable — always embed the full registry hostname in the `<TYPE>_IMAGE`
+value itself.
 
 ## Optional configuration file
 

@@ -156,6 +156,11 @@ on:
         type: string
         required: false
         default: ''
+      var-release-branches:
+        description: 'RELEASE_BRANCHES Repository Variable (comma-separated, informational)'
+        type: string
+        required: false
+        default: ''
       var-image-name:
         description: 'IMAGE_NAME Repository Variable - shared default image path for any PUBLISH_<TYPE>=true registry left without its own <TYPE>_IMAGE'
         type: string
@@ -384,6 +389,7 @@ jobs:
           var-publish-upstream-tag-alias: ${{ inputs.var-publish-upstream-tag-alias }}
           var-sign-images: ${{ inputs.var-sign-images }}
           var-paths-ignore: ${{ inputs.var-paths-ignore }}
+          var-release-branches: ${{ inputs.var-release-branches }}
 
       # Makes `paths_ignore` a real config-driven setting, since (unlike a
       # trigger's static paths-ignore) this evaluates inside the job.

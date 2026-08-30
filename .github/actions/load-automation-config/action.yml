@@ -31,11 +31,11 @@ inputs:
   # while the config file remains a fully optional escape hatch.
   # ---------------------------------------------------------------------
   var-monitor-enabled:
-    description: 'Repository Variable override: DOCKER_MONITOR_ENABLED / BASE_IMAGE_MONITOR_ENABLED'
+    description: 'Repository Variable override: BASE_IMAGE_MONITOR_ENABLED'
     required: false
     default: ''
   var-update-strategy:
-    description: 'Repository Variable override: DOCKER_UPDATE_STRATEGY / BASE_IMAGE_UPDATE_STRATEGY'
+    description: 'Repository Variable override: BASE_IMAGE_UPDATE_STRATEGY'
     required: false
     default: ''
   var-update-policy:
@@ -46,11 +46,11 @@ inputs:
     required: false
     default: ''
   var-auto-create-pr:
-    description: 'Repository Variable override: DOCKER_AUTO_CREATE_PR / AUTO_CREATE_UPDATE_PR'
+    description: 'Repository Variable override: AUTO_CREATE_UPDATE_PR'
     required: false
     default: ''
   var-auto-merge:
-    description: 'Repository Variable override: DOCKER_AUTO_MERGE / AUTO_MERGE_UPDATE_PR'
+    description: 'Repository Variable override: AUTO_MERGE_UPDATE_PR'
     required: false
     default: ''
   var-reviewers:

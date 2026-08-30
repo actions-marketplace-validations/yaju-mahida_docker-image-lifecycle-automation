@@ -156,7 +156,7 @@ not sufficient.
 
 Use `.github/docker-automation.yml` only when you need nested, reviewable
 configuration or multiple instances of the same registry type. See
-[`docker-automation.yml.example`](docker-automation.yml.example).
+[`templates/docker-automation.yml`](../templates/docker-automation.yml).
 
 ## Environment guidance
 

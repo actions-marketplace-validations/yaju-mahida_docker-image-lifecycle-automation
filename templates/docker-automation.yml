@@ -1,22 +1,120 @@
-# Optional advanced configuration for a consumer repository. Copy this file
-# to .github/docker-automation.yml only when scalar Repository Variables are
-# insufficient, such as when publishing to multiple registry instances.
+# ==============================================================================
+# Docker Image Lifecycle Automation - Optional Repository Configuration File
+# Copy to .github/docker-automation.yml in consuming repositories.
+#
+# Precedence:
+# 1. Caller workflow_call "with:" inputs
+# 2. Repository Variables (Settings > Secrets and variables > Actions > Variables)
+# 3. This configuration file (.github/docker-automation.yml)
+# 4. Built-in defaults
+# ==============================================================================
+
 monitor:
+  # Repo Var: BASE_IMAGE_MONITOR_ENABLED / DOCKER_MONITOR_ENABLED (Default: true)
   enabled: true
-  update_strategy: patch
+
+  # Repo Var: BASE_IMAGE_UPDATE_POLICY (Default: DIGEST_AND_VERSION)
+  # Options: DIGEST_AND_VERSION | DIGEST_ONLY | VERSION_ONLY | STRICT_SEMVER | ALWAYS_UPDATE
   update_policy: DIGEST_AND_VERSION
+
+  # Repo Var: BASE_IMAGE_UPDATE_STRATEGY / DOCKER_UPDATE_STRATEGY (Default: patch)
+  # Options: patch | minor | major
+  update_strategy: patch
+
+  # Repo Var: AUTO_CREATE_UPDATE_PR / DOCKER_AUTO_CREATE_PR (Default: true)
   auto_create_pr: true
+
+  # Repo Var: AUTO_MERGE_UPDATE_PR / DOCKER_AUTO_MERGE (Default: false)
   auto_merge: false
 
+  # Repo Var: PR_REVIEWERS / REPOSITORY_REVIEWERS (comma-separated or YAML list)
+  reviewers:
+    - platform-team
+
+  # Repo Var: PR_ASSIGNEES / REPOSITORY_ASSIGNEES (comma-separated or YAML list)
+  assignees:
+    - application-owner
+
 release:
+  # Repo Var: RELEASE_BRANCHES (Default: main)
+  branches:
+    - main
+
+  # Repo Var: PATHS_IGNORE (JSON array string in vars, or YAML list here)
+  paths_ignore:
+    - '*.md'
+    - 'docs/**'
+
+  # Repo Var: DOCKERFILE_PATH (Default: Dockerfile)
   dockerfile: Dockerfile
+
+  # Repo Var: BUILD_CONTEXT (Default: .)
   build_context: .
+
+  # Repo Var: BUILD_PLATFORMS (Default: linux/amd64)
   platforms: linux/amd64,linux/arm64
+
+  # Repo Var: TEST_COMMAND (Default: "")
+  test_command: 'docker run --rm candidate-image:test true'
+
+  # Repo Var: DEPLOYMENT_ENVIRONMENT (Default: production)
   environment: production
-  scan_severity_threshold: CRITICAL,HIGH
+
+  # Repo Var: SCAN_SEVERITY_THRESHOLD (Default: CRITICAL,HIGH)
+  scan_severity_threshold: 'CRITICAL,HIGH'
+
+  # Repo Var: RELEASE_TAG_STRATEGY (Default: BASE_TAG_INCREMENT)
+  # Options: BASE_TAG_INCREMENT | UPSTREAM_TAG | PREFIX_INCREMENT |
+  #          RELEASE_INCREMENT | SEMVER_INCREMENT | DATE_INCREMENT | DIGEST
   tag_strategy: BASE_TAG_INCREMENT
+
+  # Repo Var: RELEASE_PREFIX (Used by PREFIX_INCREMENT and DATE_INCREMENT)
+  prefix: 'app'
+
+  # Repo Var: RELEASE_INCREMENT_BASENAME (Used by RELEASE_INCREMENT, default: release)
+  increment_basename: 'release'
+
+  # Repo Var: RELEASE_SEMVER_INITIAL (Used by SEMVER_INCREMENT, default: v1.0.0)
+  semver_initial: 'v1.0.0'
+
+  # Repo Var: RELEASE_SEMVER_BUMP (Used by SEMVER_INCREMENT, default: patch)
+  semver_bump: 'patch'
+
+  # Repo Var: PUBLISH_UPSTREAM_TAG_ALIAS (Default: false)
   publish_upstream_tag_alias: false
-  sign_images: true
+
+  # Repo Var: SIGN_IMAGES (Default: false - keyless Cosign + GitHub OIDC)
+  sign_images: false
+
+  # Multi-registry targets (Variables: PUBLISH_<TYPE>=true + <TYPE>_IMAGE=...)
+  # Use this array when targeting multiple instances of the same registry type.
   registries:
     - type: ghcr
-      image: ghcr.io/organization-name/image-name
+      image: 'ghcr.io/${GITHUB_REPOSITORY}'
+    - type: dockerhub
+      image: '${DOCKER_HUB_REGISTRY}/${IMAGE_NAME}'
+    - type: acr
+      registry: 'myregistry.azurecr.io'
+      image: 'myregistry.azurecr.io/app'
+    - type: ecr
+      image: '123456789012.dkr.ecr.us-east-1.amazonaws.com/app'
+      region: 'us-east-1'
+    - type: quay
+      image: 'quay.io/my-org/app'
+    - type: harbor
+      registry: 'harbor.example.com'
+      image: 'harbor.example.com/project/app'
+    - type: artifactory
+      registry: 'yourco.jfrog.io'
+      image: 'yourco.jfrog.io/docker-local/app'
+    - type: gitlab
+      registry: 'registry.gitlab.com'
+      image: 'registry.gitlab.com/your-group/your-project'
+    - type: digitalocean
+      image: 'registry.digitalocean.com/your-registry/app'
+    - type: ocir
+      registry: 'iad.ocir.io'
+      image: 'iad.ocir.io/your-tenancy/app'
+    - type: private
+      registry: 'registry.example.com'
+      image: 'registry.example.com/app'

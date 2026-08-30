@@ -275,7 +275,14 @@ jobs:
             --latest
 
           REPO="${{ github.repository }}"
-          if gh api "repos/${REPO}/git/refs/tags/${MAJOR_TAG}" >/dev/null 2>&1; then
+          # The "get a reference" endpoint prefix-matches ambiguous tag
+          # names (e.g. a lookup for "v1" can resolve against "v1.0.0" or
+          # "v1.1.0"), so it cannot be used to test for the *exact*
+          # existence of the moving major tag - doing so previously caused
+          # this step to wrongly attempt a PATCH against a ref that does
+          # not exist, failing with HTTP 422. `git ls-remote` performs an
+          # exact ref-name match instead.
+          if git ls-remote --exit-code --tags origin "refs/tags/${MAJOR_TAG}" >/dev/null 2>&1; then
             gh api --method PATCH "repos/${REPO}/git/refs/tags/${MAJOR_TAG}" \
               -f sha="${{ github.sha }}" -F force=true
           else

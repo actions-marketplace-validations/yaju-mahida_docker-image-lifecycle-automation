@@ -86,8 +86,44 @@ release:
   # Repo Var: SIGN_IMAGES (Default: false - keyless Cosign + GitHub OIDC)
   sign_images: false
 
-  # Multi-registry targets (Variables: PUBLISH_<TYPE>=true + <TYPE>_IMAGE=...)
-  # Use this array when targeting multiple instances of the same registry type.
+  # ----------------------------------------------------------------------
+  # PUBLISH TARGETS - Repository Variables (recommended, NOT this file)
+  # ----------------------------------------------------------------------
+  # The single-instance-per-registry-type case is driven entirely by
+  # Repository Variables, NOT by keys in this YAML file. Set a `PUBLISH_
+  # <TYPE>=true` variable plus its matching `<TYPE>_IMAGE` (and, for some
+  # providers, a registry host/region companion variable) and the reusable
+  # release workflow publishes to it - no config file entry needed. These
+  # are listed here purely as a documentation/quick-start reference; they
+  # take precedence over any matching `type:` entry in the `registries:`
+  # array below, which is skipped automatically to avoid duplicates.
+  #
+  #   PUBLISH_GHCR=true            GHCR_IMAGE=ghcr.io/org/app
+  #   PUBLISH_DOCKERHUB=true       DOCKERHUB_IMAGE=org/app
+  #   PUBLISH_ACR=true             ACR_IMAGE=myregistry.azurecr.io/app
+  #   PUBLISH_ECR=true             ECR_IMAGE=123456789012.dkr.ecr.us-east-1.amazonaws.com/app
+  #                                 AWS_REGION=us-east-1
+  #   PUBLISH_QUAY=true            QUAY_IMAGE=quay.io/org/app
+  #   PUBLISH_HARBOR=true          HARBOR_IMAGE=harbor.example.com/project/app
+  #                                 HARBOR_REGISTRY_HOST=harbor.example.com
+  #   PUBLISH_ARTIFACTORY=true     ARTIFACTORY_IMAGE=yourco.jfrog.io/docker-local/app
+  #                                 ARTIFACTORY_REGISTRY_HOST=yourco.jfrog.io
+  #   PUBLISH_GITLAB=true          GITLAB_IMAGE=registry.gitlab.com/group/project
+  #                                 GITLAB_REGISTRY_HOST=registry.gitlab.com
+  #   PUBLISH_DIGITALOCEAN=true    DIGITALOCEAN_IMAGE=registry.digitalocean.com/reg/app
+  #   PUBLISH_OCIR=true            OCIR_IMAGE=iad.ocir.io/tenancy/app
+  #                                 OCIR_REGISTRY_HOST=iad.ocir.io
+  #   PUBLISH_PRIVATE=true         PRIVATE_IMAGE=registry.example.com/app
+  #                                 PRIVATE_REGISTRY_HOST=registry.example.com
+  #
+  #   IMAGE_NAME=org/app  # shared fallback image path for any PUBLISH_<TYPE>=true
+  #                       # registry left without its own <TYPE>_IMAGE variable.
+  #
+  # Multi-registry / advanced targets (config-file-only escape hatch):
+  # use this array ONLY for cases a scalar Repository Variable cannot
+  # express, e.g. a second instance of the same registry type (two ACR
+  # regions, region-sharded ECR) or a registry type/host worth keeping in
+  # reviewable YAML rather than the repository Settings UI.
   registries:
     - type: ghcr
       image: 'ghcr.io/${GITHUB_REPOSITORY}'

@@ -52,7 +52,7 @@ jobs:
           import re
           import yaml
 
-          repository = 'yaju-mahida/docker-image-lifecycle'
+          repository = 'yaju-mahida/docker-image-lifecycle-automation'
           workflow_inputs = {}
           for workflow_path in Path('.github/workflows').glob('reusable-*.yml'):
               workflow = yaml.safe_load(workflow_path.read_text(encoding='utf-8'))

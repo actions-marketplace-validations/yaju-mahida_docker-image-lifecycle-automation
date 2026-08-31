@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: upstream
-        uses: your-org/docker-image-lifecycle@v1
+        uses: your-org/docker-image-lifecycle-automation@v1
         with:
           registry: docker.io
           repository: library/nginx

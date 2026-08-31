@@ -98,7 +98,7 @@ def run_fixture(fixture: Path) -> None:
     # directory. Ignoring only cleanup errors on Windows keeps that platform
     # quirk from hiding fixture assertion failures; Linux CI stays strict.
     with tempfile.TemporaryDirectory(
-        prefix="docker-image-lifecycle-",
+        prefix="docker-image-lifecycle-automation-",
         ignore_cleanup_errors=os.name == "nt",
     ) as temp:
         workspace = Path(temp) / "workspace"

@@ -28,7 +28,7 @@ manifest digest:
 
 ```yaml
 - id: upstream
-  uses: yaju-mahida/docker-image-lifecycle@v1
+  uses: yaju-mahida/docker-image-lifecycle-automation@v1
   with:
     registry: docker.io
     repository: library/nginx
@@ -90,8 +90,8 @@ responsibilities, and compatibility guarantees.
 
 1. Copy [`templates/minimal-monitor.yml`](templates/minimal-monitor.yml) to
    `.github/workflows/image-lifecycle.yml` in the image repository.
-2. Replace `your-org/docker-image-lifecycle@v1` with
-   `yaju-mahida/docker-image-lifecycle@v1`.
+2. Replace `your-org/docker-image-lifecycle-automation@v1` with
+   `yaju-mahida/docker-image-lifecycle-automation@v1`.
 3. Set `DOCKERFILE_PATH`, `BASE_IMAGE_UPDATE_POLICY`, and optional reviewer
    variables.
 4. Run the workflow manually in dry-run mode, then enable its schedule.
@@ -102,7 +102,7 @@ responsibilities, and compatibility guarantees.
 
 | Need | Use |
 |---|---|
-| Resolve an OCI tag to a digest | Root Marketplace Action (`yaju-mahida/docker-image-lifecycle@v1`) |
+| Resolve an OCI tag to a digest | Root Marketplace Action (`yaju-mahida/docker-image-lifecycle-automation@v1`) |
 | Monitor an upstream image and create update PRs | `reusable-base-image-monitor.yml` |
 | Build, verify, release, and publish an image | `reusable-docker-release.yml` |
 | Adopt a lifecycle in stages | `templates/minimal-monitor.yml`, `templates/secure-release.yml`, or `templates/enterprise-release.yml` |

@@ -37,14 +37,14 @@ without granting access produces an error similar to:
 Invalid workflow file: .github/workflows/docker-automation.yml#L85
 error parsing called workflow
 ".github/workflows/docker-automation.yml"
--> "owner/docker-image-lifecycle/.github/workflows/reusable-base-image-monitor.yml@v1"
+-> "owner/docker-image-lifecycle-automation/.github/workflows/reusable-base-image-monitor.yml@v1"
 : workflow was not found.
 ```
 
 To fix this, grant access from the **automation repository's** settings,
 not the consumer repository:
 
-1. Open the automation repository (e.g. `owner/docker-image-lifecycle`).
+1. Open the automation repository (e.g. `owner/docker-image-lifecycle-automation`).
 2. Go to **Settings → Actions → General**.
 3. Scroll to the **Access** section.
 4. Select the option that grants access to other repositories you (or your

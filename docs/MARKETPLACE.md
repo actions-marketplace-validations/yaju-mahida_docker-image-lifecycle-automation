@@ -51,7 +51,7 @@ digests.
 
 ## Publish checklist
 
-1. Make `yaju-mahida/docker-image-lifecycle` public.
+1. Make `yaju-mahida/docker-image-lifecycle-automation` public.
 2. Confirm two-factor authentication is enabled for the publishing account.
 3. Verify `LICENSE` and `NOTICE` are present and identify Apache-2.0.
 4. Ensure `README.md` contains the root-action quick start and reusable

@@ -23,7 +23,7 @@ name: Reusable - Base Image Monitor
 # useful for one-off workflow_dispatch runs.
 #
 # Consumers should reference this workflow with a pinned version, e.g.:
-#   uses: <org>/docker-image-lifecycle/.github/workflows/reusable-base-image-monitor.yml@v1
+#   uses: <org>/docker-image-lifecycle-automation/.github/workflows/reusable-base-image-monitor.yml@v1
 
 on:
   workflow_call:
@@ -185,7 +185,7 @@ jobs:
       # Reusable logic unit - see .github/actions/load-automation-config
       - name: Load automation configuration
         id: config
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/load-automation-config@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/load-automation-config@v1
         with:
           config-path: ${{ inputs.config-path }}
           env-overrides: ${{ inputs.config-env }}
@@ -223,7 +223,7 @@ jobs:
       - name: Extract base image reference from Dockerfile
         id: extract-base-image
         if: ${{ steps.config.outputs.monitor_enabled == 'true' }}
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/extract-base-image@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/extract-base-image@v1
         with:
           dockerfile-path: ${{ inputs.dockerfile-path }}
 
@@ -233,7 +233,7 @@ jobs:
       - name: Resolve current tag digest
         id: current-digest
         if: ${{ steps.config.outputs.monitor_enabled == 'true' && steps.extract-base-image.outputs.base_image_version != '' }}
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/resolve-image-digest@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/resolve-image-digest@v1
         with:
           registry: ${{ steps.extract-base-image.outputs.registry }}
           repository: ${{ steps.extract-base-image.outputs.repository }}
@@ -247,7 +247,7 @@ jobs:
       - name: Determine latest available base image tag
         id: check-latest
         if: ${{ steps.config.outputs.monitor_enabled == 'true' && steps.extract-base-image.outputs.base_image_version != '' }}
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/check-latest-upstream-tag@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/check-latest-upstream-tag@v1
         with:
           registry: ${{ steps.extract-base-image.outputs.registry }}
           repository-path: ${{ steps.extract-base-image.outputs.repository }}
@@ -261,7 +261,7 @@ jobs:
       - name: Resolve latest tag digest
         id: latest-digest
         if: ${{ steps.check-latest.outputs.update_available == 'true' }}
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/resolve-image-digest@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/resolve-image-digest@v1
         with:
           registry: ${{ steps.extract-base-image.outputs.registry }}
           repository: ${{ steps.extract-base-image.outputs.repository }}
@@ -297,7 +297,7 @@ jobs:
       - name: Decide whether to update
         id: decide
         if: ${{ steps.config.outputs.monitor_enabled == 'true' }}
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/decide-base-image-update@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/decide-base-image-update@v1
         with:
           policy: ${{ steps.effective.outputs.update_policy }}
           update-strategy: ${{ steps.effective.outputs.update_strategy }}

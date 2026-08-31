@@ -24,7 +24,7 @@ name: Reusable - Docker Image Release
 # config-driven gate rather than a documentation-only value.
 #
 # Consumers should reference this workflow with a pinned version, e.g.:
-#   uses: <org>/docker-image-lifecycle/.github/workflows/reusable-docker-release.yml@v1
+#   uses: <org>/docker-image-lifecycle-automation/.github/workflows/reusable-docker-release.yml@v1
 
 on:
   workflow_call:
@@ -371,7 +371,7 @@ jobs:
           fetch-depth: 2
 
       - id: load
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/load-automation-config@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/load-automation-config@v1
         with:
           config-path: ${{ inputs.config-path }}
           env-overrides: ${{ inputs.config-env }}
@@ -394,7 +394,7 @@ jobs:
       # Makes `paths_ignore` a real config-driven setting, since (unlike a
       # trigger's static paths-ignore) this evaluates inside the job.
       - id: paths
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/check-paths-changed@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/check-paths-changed@v1
         with:
           patterns: ${{ steps.load.outputs.paths_ignore }}
 
@@ -403,7 +403,7 @@ jobs:
       # release.registries array for any registry type not covered by a
       # variable - see .github/actions/resolve-registries.
       - id: registries
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/resolve-registries@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/resolve-registries@v1
         with:
           image-name: ${{ inputs.var-image-name }}
           publish-ghcr: ${{ inputs.var-publish-ghcr }}
@@ -496,12 +496,12 @@ jobs:
           fetch-depth: 0
 
       - id: extract
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/extract-base-image@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/extract-base-image@v1
         with:
           dockerfile-path: ${{ needs.config.outputs.dockerfile }}
 
       - id: calc
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/calculate-next-tag@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/calculate-next-tag@v1
         with:
           base-tag: ${{ steps.extract.outputs.base_image_version }}
           strategy: ${{ needs.config.outputs.release_tag_strategy }}
@@ -647,7 +647,7 @@ jobs:
           path: /tmp/release-sbom
 
       - id: generate-release
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/generate-release@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/generate-release@v1
         with:
           new-tag: ${{ needs.version.outputs.new_git_tag }}
           base-version: ${{ needs.version.outputs.base_image_version }}
@@ -717,7 +717,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to registry
-        uses: yaju-mahida/docker-image-lifecycle/.github/actions/registry-login@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation/.github/actions/registry-login@v1
         with:
           registry-type: ${{ matrix.target.type }}
           registry: ${{ matrix.target.registry || '' }}

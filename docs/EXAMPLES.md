@@ -1,6 +1,6 @@
 # Public examples
 
-All examples use the generic `your-org/docker-image-lifecycle@v1` reference.
+All examples use the generic `your-org/docker-image-lifecycle-automation@v1` reference.
 Replace `your-org` with the owner of your approved platform fork or the public
 upstream repository.
 

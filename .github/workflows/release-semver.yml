@@ -2,7 +2,7 @@ name: Release (SemVer)
 
 # PLATFORM RELEASE WORKFLOW
 #
-# This releases the docker-image-lifecycle PLATFORM itself (the Marketplace
+# This releases the docker-image-lifecycle-automation PLATFORM itself (the Marketplace
 # Action, reusable workflows, and composite actions) - it is unrelated to
 # the RELEASE_TAG_STRATEGY consumer repositories choose for their own image
 # releases (see .github/actions/calculate-next-tag).

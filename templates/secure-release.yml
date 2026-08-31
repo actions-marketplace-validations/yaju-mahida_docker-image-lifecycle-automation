@@ -24,7 +24,7 @@ permissions:
 jobs:
   monitor:
     if: ${{ github.event_name != 'push' }}
-    uses: yaju-mahida/docker-image-lifecycle/.github/workflows/reusable-base-image-monitor.yml@v1
+    uses: yaju-mahida/docker-image-lifecycle-automation/.github/workflows/reusable-base-image-monitor.yml@v1
     with:
       dockerfile-path: ${{ vars.DOCKERFILE_PATH || 'Dockerfile' }}
       update-policy: ${{ vars.BASE_IMAGE_UPDATE_POLICY || 'DIGEST_AND_VERSION' }}
@@ -39,7 +39,7 @@ jobs:
 
   release:
     if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
-    uses: yaju-mahida/docker-image-lifecycle/.github/workflows/reusable-docker-release.yml@v1
+    uses: yaju-mahida/docker-image-lifecycle-automation/.github/workflows/reusable-docker-release.yml@v1
     with:
       var-dockerfile: ${{ vars.DOCKERFILE_PATH }}
       var-build-context: ${{ vars.BUILD_CONTEXT }}

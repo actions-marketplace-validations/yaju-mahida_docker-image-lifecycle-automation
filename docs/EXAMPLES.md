@@ -1,8 +1,8 @@
 # Public examples
 
-All examples use the generic `your-org/docker-image-lifecycle-automation@v1` reference.
-Replace `your-org` with the owner of your approved platform fork or the public
-upstream repository.
+All examples use the `yaju-mahida/docker-image-lifecycle-automation@v1`
+reference. Replace the owner if you are consuming an approved fork rather
+than the upstream repository.
 
 ## Marketplace digest resolver
 

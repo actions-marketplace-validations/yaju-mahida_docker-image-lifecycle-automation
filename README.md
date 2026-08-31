@@ -90,8 +90,9 @@ responsibilities, and compatibility guarantees.
 
 1. Copy [`templates/minimal-monitor.yml`](templates/minimal-monitor.yml) to
    `.github/workflows/image-lifecycle.yml` in the image repository.
-2. Replace `your-org/docker-image-lifecycle-automation@v1` with
-   `yaju-mahida/docker-image-lifecycle-automation@v1`.
+2. Confirm the `uses:` reference points at
+   `yaju-mahida/docker-image-lifecycle-automation@v1`, or change the owner
+   if you are consuming an approved fork.
 3. Set `DOCKERFILE_PATH`, `BASE_IMAGE_UPDATE_POLICY`, and optional reviewer
    variables.
 4. Run the workflow manually in dry-run mode, then enable its schedule.

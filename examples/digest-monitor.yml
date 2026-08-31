@@ -1,5 +1,5 @@
 # Resolve a public OCI image tag to a stable digest. Add this workflow to a
-# consumer repository and replace your-org with the platform owner.
+# consumer repository.
 name: Check Base Image Digest
 
 on:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: upstream
-        uses: your-org/docker-image-lifecycle-automation@v1
+        uses: yaju-mahida/docker-image-lifecycle-automation@v1
         with:
           registry: docker.io
           repository: library/nginx

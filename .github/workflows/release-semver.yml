@@ -1,38 +1,75 @@
 name: Release (SemVer)
 
-# PLATFORM RELEASE WORKFLOW
+# PLATFORM RELEASE WORKFLOW (SEMANTIC VERSIONING)
 #
-# This releases the docker-image-lifecycle-automation PLATFORM itself (the Marketplace
-# Action, reusable workflows, and composite actions) - it is unrelated to
-# the RELEASE_TAG_STRATEGY consumer repositories choose for their own image
-# releases (see .github/actions/calculate-next-tag).
+# This workflow automates versioning and releases for the
+# docker-image-lifecycle-automation platform itself (GitHub Action,
+# reusable workflows, and composite actions).
 #
-# On every push to `main`, this workflow:
-#   1. Finds the latest vX.Y.Z tag. If none exists yet, the very first
-#      published version is always v1.0.0 (never v0.x.y), regardless of
-#      commit classification.
-#   2. Otherwise classifies every commit since that tag using Conventional
-#      Commits:
-#        "type!:" or a "BREAKING CHANGE:" footer -> major
-#        "feat:"                                -> minor
-#        "fix:" / "perf:" / "revert:"            -> patch
-#      Any other commit type (docs, chore, ci, test, refactor, style,
-#      build) does not trigger a release on its own.
-#   3. Skips the release entirely when no commit qualifies, or when the
-#      latest commit message contains "[skip release]".
-#   4. Creates the release via the GitHub REST/Releases API rather than a
-#      local `git push` of a new tag - the tag is attached to a commit SHA
-#      that already passed branch protection (PR review + verified
-#      signature) when it merged to `main`, so API-created tags do not
-#      themselves need to be signed to satisfy repository rulesets.
-#   5. Moves the moving major-version tag (e.g. `v1`) to the new release,
-#      which is what consumers should pin `uses: owner/repo@v1` to.
-#   6. Prepends the release notes to CHANGELOG.md and opens a pull request
-#      with that change via peter-evans/create-pull-request, since `main`
-#      is protected and this workflow's token cannot push to it directly.
+# On every push to `main` or manual run:
 #
-# Manual runs can force a specific bump (or a no-op dry run) with the
-# `bump` input below.
+# 1. Identifies the latest semantic version tag (vX.Y.Z).
+#    - If no previous release exists, the first release is always v1.0.0.
+#
+# 2. Determines the next version.
+#
+#    Automatic mode (`bump=auto`) uses Conventional Commit messages:
+#
+#      Commit Type / Pattern                Result
+#      -------------------------------      -------
+#      feat!:                               Major
+#      fix!:                                Major
+#      BREAKING CHANGE: footer              Major
+#      feat:                                Minor
+#      fix:                                 Patch
+#      perf:                                Patch
+#      revert:                              Patch
+#      docs:                                No release
+#      chore:                               No release
+#      ci:                                  No release
+#      test:                                No release
+#      refactor:                            No release
+#
+#    Notes:
+#    - The highest bump level found wins:
+#        major > minor > patch
+#    - Examples:
+#        fix + feat                -> Minor release
+#        fix + feat!               -> Major release
+#        docs + chore + test       -> No release
+#
+# 3. Manual execution can override commit classification:
+#    - bump=patch  -> Force patch release
+#    - bump=minor  -> Force minor release
+#    - bump=major  -> Force major release
+#    - bump=auto   -> Use Conventional Commit analysis
+#
+# 4. Skips release creation when:
+#    - No qualifying commits exist since the last release.
+#    - The latest commit message contains `[skip release]`.
+#
+# 5. Generates categorized release notes from all commits included
+#    in the calculated release range.
+#
+# 6. Creates a GitHub Release and semantic version tag using the
+#    GitHub Releases API against the already-reviewed commit on `main`.
+#
+# 7. Updates the moving major-version tag (for example `v1`) so
+#    consumers using:
+#
+#         uses: owner/repository@v1
+#
+#    automatically receive the latest compatible release within
+#    that major version.
+#
+# 8. Prepends release notes to CHANGELOG.md and opens a pull request
+#    with the changelog update because direct pushes to the protected
+#    `main` branch are not permitted.
+#
+# Dry-run mode:
+#   - Calculates the next version.
+#   - Generates release notes.
+#   - Does not create releases, update tags, or open a changelog PR.
 
 on:
   push:
